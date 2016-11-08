@@ -1,0 +1,86 @@
+#!/sbin/openrc-run
+
+configure() {
+    if [ "${LIVE_STARTX}" = "1" ] && [ -n "$(which Xorg)" ] && [ -n "$(which startx)" ];then    
+        echo '[ -z "${DISPLAY}" ] || [ -z "$(pgrep -x X)" ] && startx' > "/etc/profile.d/startx.sh"
+    else
+        rm -f "/etc/profile.d/startx.sh"
+    fi
+
+    if [ "${LIVE_USER}" != "null" ];then
+        busybox adduser -D -u "${LIVE_USER_UID}" -s /bin/bash -G users \
+            -h "/home/${LIVE_USER}" "${LIVE_USER}"
+        if [ "${LIVE_USER_GROUPS}" != "null" ];then
+            for group in ${LIVE_USER_GROUPS//,/ };do
+                busybox addgroup "${LIVE_USER}" "${group}"
+            done
+        fi
+        if [ "${LIVE_USER_PASS}" != "null" ];then
+            echo "${LIVE_USER}:${LIVE_USER_PASS}" | chpasswd
+        fi
+    fi
+
+    if [ "${LIVE_ROOT_PASS}" != "null" ];then
+        echo "root:${LIVE_ROOT_PASS}" | chpasswd
+    fi
+
+    if [ "${LIVE_USER_PASS}" = "null" ] || [ "${LIVE_USER_PASS}" = "" ] && \
+        [ -n "${LIVE_USER}" ] && [ -n "$(which sudo)" ];then
+        echo "${LIVE_USER}  ALL=(ALL) NOPASSWD: ALL" >> "/etc/sudoers"
+    elif [ -n "${LIVE_USER}" ] && [ -n "$(which sudo)" ];then
+        echo "${LIVE_USER}  ALL=(ALL) ALL" >> "/etc/sudoers"
+    fi
+
+    if [ -n "$(cut -f1 -d':' /etc/passwd | grep -F ${LIVE_AUTO_LOGIN})" ];then
+        if [ -f "/usr/share/config/kdm/kdmrc" ];then
+            sed -i -r -e "s|^(#)?AutoLoginEnable=.*|AutoLoginEnable=true|g" \
+                "/usr/share/config/kdm/kdmrc"
+            sed -i -r -e "s|^(#)?AutoLoginUser=.*|AutoLoginUser=${LIVE_AUTO_LOGIN}|g" \
+                "/usr/share/config/kdm/kdmrc"
+        else
+            sed -i -e "/^c1:.*agetty.*/ s/$/ -a ${LIVE_AUTO_LOGIN}/" "/etc/inittab"
+        fi
+    fi
+
+    if [ "${LIVE_LANG}" != "null" ];then
+        echo -e "export LANG=\"${LIVE_LANG}\"\nexport LC_ALL=\"${LIVE_LANG}\"" \
+            > "/etc/profile.d/locales.sh"
+        echo "${LIVE_LANG} ${LIVE_LANG##*.}" > "/etc/locale.conf"
+        locale-gen
+    fi
+}
+
+start() {
+    source "/etc/live.conf"
+
+    # Parse /proc/cmdline and override variables
+    for arg in $(cat /proc/cmdline);do
+        case "${arg}" in
+            live_config=[0-2]) LIVE_CONFIG="${arg##*=}" ;;
+            live_startx=[0-1]) LIVE_STARTX="${arg##*=}" ;;
+            live_auto_login=*) LIVE_AUTO_LOGIN="${arg##*=}" ;;
+            live_root_pass=*) LIVE_ROOT_PASS="${arg##*=}" ;;
+            live_lang=*) LIVE_LANG="${arg##*=}" ;;
+            live_user=*) LIVE_USER="${arg##*=}"; LIVE_USER_PASS="${arg##*=}" ;;
+            live_user_pass=*) LIVE_USER_PASS="${arg##*=}" ;;
+            live_user_uid=*) LIVE_USER_UID="${arg##*=}" ;;
+            live_user_groups=*) LIVE_USER_GROUPS="${arg##*=}" ;;
+        esac
+    done
+
+    if [ "${LIVE_CONFIG}" = "1" ];then
+        ebegin "Configuring Live CD/DVD/USB environment"
+
+        einfo "Making sure root filesystem is read-write"
+        mount -o remount,rw /
+        einfo "Setting things up"
+        configure
+        kill -SIGHUP 1
+
+        eend $?
+    fi
+}
+
+stop() {
+    return 0
+}

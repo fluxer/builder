@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+
+start() {
+    source "/etc/live.conf"
+
+    # Parse /proc/cmdline and override variables
+    for arg in $(cat /proc/cmdline);do
+        case "${arg}" in
+            live_eject=[0-1]) LIVE_EJECT="${arg##*=}" ;;
+        esac
+    done
+
+    if [ "${LIVE_EJECT}" = "1" ];then
+        local boot_dev="$(cat /live/boot_device)"
+
+        einfo "Unmounting boot device"
+        umount -fl "${boot_dev}"
+
+        einfo "Ejecting boot device"
+        eject -T "${boot_dev}"
+
+        ewarn "Press any key to continue"
+        read -s -n 1
+
+        eend $?
+    fi
+}

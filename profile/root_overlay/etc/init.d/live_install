@@ -1,0 +1,569 @@
+#!/sbin/openrc-run
+
+depend() {
+    before kdm
+    after live_config
+    use net
+}
+
+msg() {
+    echo -e " >> $*"
+}
+
+chroot_install_init() {
+    msg "Copying host files to chroot"
+    cp -f "/etc/resolv.conf" "${install_path}/etc/"
+
+    for mnt in "/dev" "/proc" "/sys"; do
+        if [ -z "$(grep ${install_path}${mnt} /proc/mounts)" ];then
+            msg "Mounting ${mnt}"
+            mount --rbind "${mnt}" "${install_path}${mnt}"
+        fi
+    done
+}
+
+
+chroot_install_exit() {
+    local mnt
+
+    for mnt in "/dev" "/proc" "/sys"; do
+        if [ -n "$(grep ${install_path}${mnt} /proc/mounts)" ];then
+            msg "Unmounting ${mnt}"
+            umount -fl "${install_path}${mnt}"
+        fi
+    done
+}
+
+reset_state() {
+    local dev dev_type
+    local fs mp
+
+    mkdir -p "${i_store}"
+    echo -n > "${i_store}/partitions"
+    rm -f "${i_store}/installed"
+
+    unset DISKS_LIST
+    for dev in $(find /dev -name '[hsv]d[a-z]' | sort);do
+        DISKS_LIST="${DISKS_LIST} $dev - "
+    done
+
+    PARTITIONS_LIST=''
+    for dev in $(find /dev -name '[hsv]d[a-z][1-9]*' | sort);do
+        dev_type="$(blkid -o value -s TYPE ${dev})"
+
+        if [ -z "${dev_type}" ];then
+            dev_type="none"
+        fi
+
+        PARTITIONS_LIST="${PARTITIONS_LIST} ${dev} ${dev_type} "
+    done
+
+    FILESYSTEMS_LIST=''
+    # detect if filesystem tools are available
+    for fs in "ext2" "ext3" "ext4" "ntfs" "vfat";do
+        if [ -n "$(type -p mkfs.${fs})" ];then
+            FILESYSTEMS_LIST="${FILESYSTEMS_LIST} ${fs} -"
+        fi
+    done
+    if [ -n "$(type -p mkswap)" ];then
+        FILESYSTEMS_LIST="${FILESYSTEMS_LIST} swap -"
+    fi
+
+    MOUNTPOINTS_LIST=''
+    for mp in "/" "/boot" "/usr" "/home" "/var" "swap";do
+        MOUNTPOINTS_LIST="${MOUNTPOINTS_LIST} ${mp} -"
+    done
+}
+
+#=============================== Menu releated functions ==============================#
+
+install_main_menu() {
+    local rv
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout --title '[ INSTALL ]' \
+        --cancel-label "Done" --default-item "${def}" \
+        --menu "Choose an option or <Done> to continue booting" 13 40 23 \
+        "1" "Prepare disk(s)" \
+        "2" "Choose partition(s)" \
+        "3" "Install system" \
+        "4" "Install bootloader" \
+        "5" "Post configuration" \
+        "6" "Shutdown" \
+        "7" "Reboot" \
+        "8" "Shell" \
+        "9" "Reset")
+
+    def="${rv}"
+    case "${rv}" in
+        1) choose_disks_menu ;;
+        2) choose_partition_menu ;;
+        3) install_system_exec ;;
+        4) install_bootloader_menu ;;
+        5) post_configuration_menu ;;
+        6) halt ;;
+        7) reboot ;;
+        8) shell_exec ;;
+        9) reset_state
+           install_main_menu ;;
+        *) exit ;;
+    esac
+}
+
+choose_disks_menu() {
+    local rv tools_list dev
+
+    if [ -z "${DISKS_LIST// /}" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "No Hard-Disks detected" 6 40
+        install_main_menu
+    fi
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout --title '[ DISKS ]' \
+        --cancel-label "Go Back" --default-item "${def}" \
+        --menu "Choose a Disk or <Go Back> to return" 13 40 23 ${DISKS_LIST})
+
+    def="${rv}"
+    case "${rv}" in
+        ???*) dev="${rv}" ;;
+        *) install_main_menu ;;
+    esac
+
+    for t in "cfdisk" "sfdisk" "fdisk" "cparted" "parted";do
+        if [ -n "$(type -p ${t})" ];then
+            tools_list="${tools_list} ${t} -"
+        fi
+    done
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout --title '[ DISKS ]' \
+        --cancel-label "Go Back" --default-item "${def}" \
+        --menu "Choose a Disk preperation tool or <Go Back> to return" 13 40 23 \
+        ${tools_list})
+
+    def="${rv}"
+    case "${rv}" in
+        ??*) "${rv}" "${dev}"
+           reset_state
+           choose_disks_menu ;;
+        *) choose_disks_menu ;;
+    esac
+}
+
+choose_partition_menu() {
+    local rv
+
+    # check if we have something to show
+    if [ -z "${PARTITIONS_LIST// /}" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "No partitions detected or left" 6 40
+        install_main_menu
+    fi
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+        --title '[ PARTITIONING ]' --cancel-label "Go Back" \
+        --default-item "${def}" --menu "Choose a partition or <Go Back> to return" 13 40 23 \
+        ${PARTITIONS_LIST})
+
+    def="${rv}"
+    case "${rv}" in
+        ???*) prepare_partition_menu "${rv}" ;;
+        *) install_main_menu ;;
+    esac
+}
+
+prepare_partition_menu() {
+    local device="${1}"
+    local mpoint format filesystem ofilesystem
+    local rv
+
+    # check if there are mountpoints left
+    if [ -z "${MOUNTPOINTS_LIST// /}" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+        --msgbox "No mountpoints left" 6 40
+        choose_partition_menu
+    fi
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+        --title '[ PARTITIONING ]' --cancel-label "Go Back" \
+        --default-item "${def}" \
+        --menu "Choose mountpoint for ${device} or <Go Back> to return" 13 40 23 \
+        ${MOUNTPOINTS_LIST})
+
+    def="${rv}"
+    case "${rv}" in
+        swap) mpoint="swap"
+            format="yes"
+            filesystem="swap" ;;
+        '/'*) mpoint="${rv}" ;;
+        *) choose_partition_menu ;;
+    esac
+
+    if [ "${mpoint}" != "swap" ];then
+        rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+            --title '[ PARTITIONING ]' --cancel-label "Go Back" \
+            --default-item "${def}" \
+            --menu "Choose wheather to format ${device} or <Go Back> to return" 13 40 23 \
+            yes - no -)
+
+        def="${rv}"
+        case "${rv}" in
+            ??*) format="${rv}" ;;
+            1) choose_partition_menu ;;
+        esac
+    fi
+
+    if [ "${format}" = "yes" ];then
+        if [ "${mpoint}" != "swap" ];then
+            rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+                --title '[ PARTITIONING ]' --cancel-label "Go Back" \
+                --default-item "${def}" \
+                --menu "Choose filesystem for ${device} or <Go Back> to return" 13 40 23 \
+                ${FILESYSTEMS_LIST})
+
+            def="${rv}"
+            case "${rv}" in
+                ???*) filesystem="${rv}" ;;
+                1) choose_partition_menu ;;
+            esac
+        fi
+
+        # remove filesystem and device from array so they appear no more
+        ofilesystem="$(blkid -o value -s TYPE ${device})"
+        if [ -z "${ofilesystem}" ];then
+            ofilesystem="none"
+        fi
+        PARTITIONS_LIST="${PARTITIONS_LIST//${device} ${ofilesystem}/}"
+        MOUNTPOINTS_LIST="${MOUNTPOINTS_LIST//${mpoint} -/}"
+    else
+        format="no"
+        filesystem="$(blkid -o value -s TYPE ${device})"
+
+        # remove filesystem and device from array so they appear no more
+        PARTITIONS_LIST="${PARTITIONS_LIST//${device} ${filesystem}/}"
+        MOUNTPOINTS_LIST="${MOUNTPOINTS_LIST//${mpoint} -/}"
+    fi
+
+    echo >> "${i_store}/partitions" "${device} ${mpoint} ${format} ${filesystem}"
+
+    choose_partition_menu
+}
+
+post_configuration_menu() {
+    local editor="$(type -p vim)"
+    local conf conf_list
+
+    if [ ! -f "${i_store}/installed" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "You must install the system first" 6 40
+        install_main_menu
+    fi
+
+    for conf in "fstab" "hostname" "hosts" "resolv.conf" "locale.conf" \
+                "modprobe.d/modprobe.conf" "spm.conf" "spm/repositories.conf" \
+                "spm/mirrors.conf" "spm/keyservers.conf" "rc.conf";do
+        if [ -r "${install_path}/etc/${conf}" ];then
+            conf_list="${conf_list} /etc/${conf} -"
+        fi
+    done
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+        --title '[ POST CONFIGURATION ]' --cancel-label "Go Back" \
+        --default-item "${def}" \
+        --menu "Choose an option or <Go Back> to return" 13 40 23 \
+        "Chroot Shell" "-" \
+        "Change Root password" "-" \
+        "Add User" "-" \
+        ${conf_list})
+
+    case "${rv}" in
+        "Chroot Shell") chroot_install_exec ;;
+        "Change Root password") change_pass_menu "root" ;;
+        "Add User") add_user_menu ;;
+        "/etc/"*) "${editor}" "${install_path}${rv}"
+                  post_configuration_menu ;;
+        *) install_main_menu ;;
+    esac
+}
+
+change_pass_menu() {
+    local user="${1}"
+
+    ask_pass() {
+        pass1=$(dialog --backtitle "${i_backtitle}" --stdout \
+            --title '[ POST CONFIGURATION ]' --cancel-label "Go Back" \
+            --insecure --passwordbox "Type the desired password" 8 40)
+        [ "$?" = "1" ] && post_configuration_menu
+        pass2=$(dialog --backtitle "${i_backtitle}" --stdout \
+            --title '[ POST CONFIGURATION ]' --cancel-label "Go Back" \
+            --insecure --passwordbox "Repeate the desired password" 8 40)
+        [ "$?" = "1" ] && post_configuration_menu
+    }
+
+    ask_pass
+    if [ "${pass1}" != "${pass2}" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "You entered different passwords" 6 40
+        ask_pass
+    elif [ "${pass2}" != "$(echo ${pass2} | tr -dc '[:alnum:]')" ]; then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "The passwords contains special characters" 6 40
+        ask_pass
+    else
+        # FIXME: Busybox's chpasswd does not support "--root" argument
+        chroot "${install_path}" chpasswd << EOF
+${user}:${pass2}
+EOF
+        if [ "$?" != "0" ];then
+            dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+                --msgbox "Unable to setup password for ${user}" 6 40
+        fi
+    fi
+
+    post_configuration_menu
+}
+
+add_user_menu() {
+    local rv
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+        --title '[ POST CONFIGURATION ]' --cancel-label "Go Back" \
+        --inputbox "Type the desired User name" 8 40)
+
+    def="${rv}"
+    case "${rv}" in
+        '') post_configuration_menu ;; # FIXME: ask again
+        ??*) user_name="${rv}" ;;
+        *) post_configuration_menu ;;
+    esac
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout \
+        --title '[ POST CONFIGURATION ]' --cancel-label "Go Back" \
+        --inputbox "Type the desired groups for ${user_name}" 8 40 \
+        "${LIVE_USER_GROUPS}")
+
+    def="${rv}"
+    case "${rv}" in
+        '') post_configuration_menu ;; # FIXME: ask again
+        ??*) user_groups="${rv}" ;;
+        *) post_configuration_menu ;;
+    esac
+
+    chroot "${install_path}" adduser -D -G users "${user_name}" \
+        -s /bin/bash || dialog --backtitle "${i_backtitle}" \
+        --title '[ ERROR ]' --msgbox "Unable to add User ${user_name}" 6 40
+    for group in ${user_groups//,/ };do
+        chroot "${install_path}" addgroup "${user_name}" "${group}" \
+            || dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "Unable to add User ${user_name} to group ${group}" 6 40
+    done
+
+    change_pass_menu "${user_name}"
+
+    choose_partition_menu
+}
+
+install_bootloader_menu() {
+    local rv
+
+    if [ ! -f "${i_store}/installed" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "You must install the system first" 6 40
+        install_main_menu
+    elif [ -z "${DISKS_LIST}" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "No Hard-Disks detected" 6 40
+        install_main_menu
+    fi
+
+    rv=$(dialog --backtitle "${i_backtitle}" --stdout --title '[ DISKS ]' \
+        --cancel-label "Go Back" --default-item "${def}" --menu \
+        "Choose a Disk preperation tool or <Go Back> to return" 13 40 23 \
+        ${DISKS_LIST})
+
+    def="${rv}"
+    case "${rv}" in
+        ???*) install_grub_exec "${rv}" ;;
+        *) install_main_menu ;;
+    esac
+}
+
+#=================================== Helper functions ===================================#
+
+install_system_exec() {
+    local sfs_image="/live/boot/live/root.sfs"
+    local device mpoint format filesystem
+
+    if [ -z "$(cat ${i_store}/partitions)" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "You must choose partitions for the system first" 6 40
+        install_main_menu
+    # FIXME: can't use -w in grep invocation, bug in Busybox
+    elif [ -z "$(grep '/' ${i_store}/partitions)" ];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+            --msgbox "Partition for the root (/) filesystem is not set" 6 40
+        install_main_menu
+    fi
+
+    {
+    msg "Unmounting devices"
+    while read device mpoint format filesystem;do
+        if [ -n "$(grep ${install_path}${mpoint} /proc/mounts)" ];then
+            umount -fl "${device}"
+        fi
+    done < "${i_store}/partitions"
+
+    msg "Formating devices and checking filesystems"
+    while read device mpoint format filesystem;do
+        if [ "${format}" = "yes" ];then
+            case "${filesystem}" in
+                ext2|ext3|ext4|ntfs|vfat) "mkfs.${filesystem}" "${device}" ;;
+                swap) mkswap -L "Swap" "${device}" ;;
+            esac
+        else
+            case "${filesystem}" in
+                ext2|ext3|ext4) "fsck.${filesystem}" -fp "${device}" ;;
+                ntfs|vfat) "fsck.vfat" -p "${device}" ;;
+            esac
+        fi
+    done < "${i_store}/partitions"
+
+    msg "Mounting devices to their place"
+    # make sure root is mounted first
+    while read device mpoint format filesystem;do
+        if [ "${mpoint}" = "/" ];then
+            modprobe "${filesystem}"
+            mkdir -p "${install_path}${mpoint}"
+            mount -t auto "${device}" "${install_path}${mpoint}"
+        fi
+    done < "${i_store}/partitions"
+
+    while read device mpoint format filesystem;do
+        # avoid mounting root again
+        [ "${mpoint}" = "/" ] && continue
+
+        # mounting swap is not necessary
+        [ "${mpoint}" = "swap" ] && continue
+
+        mkdir -p "${install_path}${mpoint}"
+        mount -t auto "${device}" "${install_path}${mpoint}"
+    done < "${i_store}/partitions"
+
+    msg "Unsquashing the root filesystem"
+    unsquashfs -f -d "${install_path}" "${sfs_image}"
+
+    msg "Removing Live CD/DVD files"
+    rc-update del live_config boot
+    rc-update del live_install default
+    rc-update del live_eject shutdown
+    rm -vf "${install_path}/etc/mkinitfs/files/live.conf"
+    rm -vf "${install_path}/etc/mkinitfs/modules/live.conf"
+    rm -vf "${install_path}/etc/mkinitfs/root/hooks/50_live"
+    rm -vf "${install_path}/etc/init.d/live_"*
+
+    # Preparing chroot environment
+    chroot_install_init
+
+    msg "Generating Kernel image"
+    chroot "${install_path}" mkinitfs
+
+    msg "Generating fstab"
+    echo -e "# /etc/fstab: static file system information.
+#
+# <file system>\t<mount point>\t<type>\t<options>\t<dump>\t<pass>
+tmpfs\t/tmp\ttmpfs\tnodev,nosuid\t0\t0
+" > "${install_path}/etc/fstab"
+
+    while read device mpoint format filesystem;do
+        echo -e "UUID=$(blkid -o value -s UUID ${device})\t${mpoint}\t${filesystem}\tdefaults\t0\t1" \
+            >> "${install_path}/etc/fstab"
+    done < "${i_store}/partitions"
+
+    echo > "${i_store}/installed"
+    } 2>&1 | dialog --title "Installing system, please be patient.." \
+        --programbox $(($(tput lines)-2)) $(($(tput cols)-2)) || \
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+        --msgbox "The system installation failed" 6 40
+
+    install_main_menu
+}
+
+install_grub_exec() {
+    local device mpoint format filesystem
+
+    { chroot_install_init
+    chroot "${install_path}" grub-install "${1}"
+    chroot "${install_path}" grub-mkconfig -o /boot/grub/grub.cfg
+    chroot_install_exit
+
+    # in some cases grub doesn't copy this file
+    if [ ! -f "${install_path}/boot/grub/normal.mod" ];then
+        cp -v "/usr/lib/grub/i386-pc/normal.mod" "${install_path}/boot/grub/normal.mod"
+    fi
+
+    } 2>&1 | dialog --title "Installing GRUB. please be patient.." \
+        --programbox $(($(tput lines)-2)) $(($(tput cols)-2)) || \
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+        --msgbox "The GRUB installation failed" 6 40
+
+    def=4
+    install_main_menu
+}
+
+chroot_install_exec() {
+    if [[ ! -d "${install_path}/bin" || ! -d "${install_path}/lib" \
+        || ! -d "${install_path}/etc" || ! -x "${install_path}/bin/bash" ]];then
+        dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+        --msgbox "The selected partition is not usable" 6 40
+        post_configuration_menu
+    fi
+
+    chroot_install_init || { dialog --backtitle "${i_backtitle}" \
+        --title '[ ERROR ]' --msgbox "Unable to prepare chroot environment" 6 40; \
+        post_configuration_menu; }
+
+    chroot "${install_path}" env HOME="/root" PS1="(chroot) $PS1" "/bin/bash" || \
+    dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+        --msgbox "Unable to chroot into ${install_path}" 6 40
+
+    chroot_install_exit
+
+    post_configuration_menu
+}
+
+shell_exec() {
+    /bin/bash || dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
+        --msgbox "Unable to execute shell /bin/bash" 6 40
+    install_main_menu
+}
+
+
+#============================== Execute function if asigned =============================#
+
+start() {
+    source "/etc/live.conf"
+
+    # Parse /proc/cmdline and override variables
+    for arg in $(cat /proc/cmdline);do
+        case "${arg}" in
+            live_install=*) LIVE_INSTALL="${arg##*=}" ;;
+            live_user_groups=*) LIVE_USER_GROUPS="${arg##*=}" ;;
+        esac
+    done
+
+    if [ "${LIVE_INSTALL}" = "1" ];then
+        i_backtitle="[ Live install ]"
+        i_store="/run/live_install"
+        install_path="/mnt/install"
+        def=1
+        ebegin "Initiating Live CD/DVD/USB installer"
+
+        reset_state
+
+        install_main_menu
+
+        eend $?
+    fi
+}
+
+stop() {
+    return 0
+}
