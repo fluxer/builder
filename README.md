@@ -47,7 +47,7 @@ a very simple installer service is provided.
 ## How to use
 
 There are a few options for the first step but the idea is to have a working
-root filesystem that matches <profile>\_root\_<arch> for the build script to
+root filesystem that matches \<profile\>\_root\_\<arch\> for the build script to
 work with in the top-level directory of a local copy of this repository:
 
 1. bootstrap a root filesystem for your distribution:
@@ -56,7 +56,7 @@ work with in the top-level directory of a local copy of this repository:
    [http://www.funtoo.org/Funtoo_Linux_Installation#Installing_the_Stage_3_tarball](http://www.funtoo.org/Funtoo_Linux_Installation#Installing_the_Stage_3_tarball)
 
 2. use existing installation, just mount the root (and /boot, /usr, etc. if
-   required) to <profile>\_root\_<arch> 
+   required) to \<profile\>\_root\_\<arch\>
 
 3. extract a root filesystem tarball, Arch Linux and Gentoo provide such
 
@@ -75,7 +75,7 @@ to setup the root filesystem and create ISO image for you:
 ## License
 
 See COPYING, the files that will be bundled with the ISO image are public
-domain licensed. The initramfs tool is periodic copy of my BFP project
+domain licensed. The initramfs tool is periodic copy from my BFP project
 with adjustments when needed to cut the fat.
 
 ## TODO
