@@ -2,7 +2,7 @@
 
 import sys, argparse, tempfile, subprocess, shutil, os, gzip, bz2, glob, ast, re
 
-app_version = "1.9.1 (83c9cb2)"
+app_version = "1.10.1 (c3061ad)"
 
 tmpdir = None
 keep = False
@@ -154,6 +154,20 @@ try:
         else:
             message.warning('File or directory does not exist', src)
 
+    # TODO: use the function once busybox has a more complete modinfo applet
+    def copy_module(name):
+        message.sub_debug('Searching for module', name)
+        try:
+            if misc.system_communicate((ARGS.busybox, 'modinfo', '-k', ARGS.kernel, name)):
+                modpath = misc.system_communicate((ARGS.busybox, 'modinfo', '-k', ARGS.kernel, '-F', 'filename', name))
+                moddepends = misc.system_communicate((ARGS.busybox, 'modinfo', '-k', ARGS.kernel, '-F', 'depends', name))
+                if moddepends:
+                    for moddepend in moddepends.strip().split(','):
+                        copy_module(moddepend.strip())
+                copy_item(modpath)
+        except:
+            message.warning('Module not found', name)
+
     def create_image(src, image, method):
         misc.system_command((ARGS.busybox, 'depmod', ARGS.kernel, '-b', ARGS.tmp))
 
@@ -185,6 +199,7 @@ try:
             'modprobe': ['-b'],
             'find': ('-type', '-name', '-exec'),
             'cpio': ('-o', '-H'),
+            # TODO: 'modinfo', ('-k', '-F')
             'depmod': ['-b'],
             'mknod': ['-m'],
             'echo': ['-e'],

@@ -12,9 +12,6 @@ file). It is a thin wrapper around it.
 Inotify() is another wrapper but around inotify system calls. It can be used
 to monitor for file/directory changes on filesystems.
 
-UDev is wrapper around libudev, use it as base only. It does not provide
-high-level methods so you will have to deal with its API a lot.
-
 '''
 
 import sys, os, re, tarfile, zipfile, subprocess, shutil, shlex, inspect, json
@@ -57,7 +54,7 @@ class Misc(object):
         else:
             self.python3 = True
         # legal are [a-zA-Z_][a-zA-Z0-9_]+
-        self._illegalx = re.compile('\\-|\\!|\\@|\\#|\\$|\\%|\\^|\\.|\\,|\\[|\\]|\\+|\\>|\\<\\"|\\||\\=|\\(|\\)')
+        self._illegalx = re.compile('\\-|\\!|\\@|\\#|\\$|\\%|\\^|\\.|\\,|\\[|\\]|\\+|\\>|\\<|\\"|\\||\\=|\\(|\\)')
 
     def typecheck(self, a, b):
         ''' Poor man's variable type checking, do not use with Python 3000 '''
@@ -392,19 +389,21 @@ class Misc(object):
         elif bensure:
             return sig1
 
-    def gpg_receive(self, lkeys, lservers=None):
+    def gpg_receive(self, lkeys, lservers=None, stag=''):
         ''' Import PGP keys as (somewhat) trusted '''
         if self.python2:
             self.typecheck(lkeys, (types.ListType, types.TupleType))
             self.typecheck(lservers, (types.NoneType, types.ListType, types.TupleType))
+            self.typecheck(stag, (types.StringTypes))
 
         if self.OFFLINE:
             return
         if lservers is None:
             lservers = []
-        self.dir_create(self.GPG_DIR, ipermissions=0o700)
+        gpgtagdir = '%s/%s' % (self.GPG_DIR, stag)
+        self.dir_create(gpgtagdir, ipermissions=0o700)
         gpg = self.whereis('gpg2', False) or self.whereis('gpg')
-        cmd = [gpg, '--homedir', self.GPG_DIR]
+        cmd = [gpg, '--homedir', gpgtagdir]
         for server in lservers:
             cmd.extend(('--keyserver', server))
         cmd.append('--recv-keys')
@@ -429,13 +428,15 @@ class Misc(object):
             self.SIGNPASS = base64.encodestring(self.getpass(sprompt))
         self.system_communicate(cmd, sinput=base64.decodestring(self.SIGNPASS))
 
-    def gpg_verify(self, sfile, ssignature=None):
+    def gpg_verify(self, sfile, ssignature=None, stag=''):
         ''' Verify file PGP signature via GnuPG '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
             self.typecheck(ssignature, (types.NoneType, types.StringTypes))
+            self.typecheck(stag, (types.StringTypes))
 
-        self.dir_create(self.GPG_DIR, ipermissions=0o700)
+        gpgtagdir = '%s/%s' % (self.GPG_DIR, stag)
+        self.dir_create(gpgtagdir, ipermissions=0o700)
         gpg = self.whereis('gpg2', False) or self.whereis('gpg')
         if not ssignature:
             ssignature = self.gpg_findsig(sfile)
@@ -452,9 +453,9 @@ class Misc(object):
             else:
                 raise(Exception('In memory verification does not support', sfile))
             cmd = '%s %s | %s --homedir %s --verify --batch %s -' % \
-                (cmd, sfile, gpg, self.GPG_DIR, ssignature)
+                (cmd, sfile, gpg, gpgtagdir, ssignature)
         else:
-            cmd = [gpg, '--homedir', self.GPG_DIR]
+            cmd = [gpg, '--homedir', gpgtagdir]
             cmd.extend(('--verify', '--batch', ssignature, sfile))
         self.system_command(cmd, shell)
 
@@ -638,8 +639,8 @@ class Misc(object):
         if data is None:
             data = {}
         request = Request(surl, headers=data)
-        # SSL verification works OOTB only on Python >= 2.7.9 (officially)
-        if sys.version_info[2] >= 9:
+        # SSL verification works OOTB only on Python >= 2.7.9 and >=3.4.0 (officially)
+        if (self.python3 and sys.version_info[2] >= 4) or (self.python2 and sys.version_info[2] >= 9):
             import ssl
             ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             return urlopen(request, timeout=self.TIMEOUT, context=ctx)
@@ -662,6 +663,7 @@ class Misc(object):
         # not all requests have content-lenght:
         # http://en.wikipedia.org/wiki/Chunked_transfer_encoding
         rsize = rfile.headers.get('Content-Length', '0')
+        encoding = rfile.headers.get('Transfer-Encoding', 'unknown')
         last = '%s.last' % sfile
         if os.path.exists(sfile):
             lsize = str(os.path.getsize(sfile))
@@ -670,9 +672,7 @@ class Misc(object):
             elif lsize > rsize or (os.path.isfile(last) and not self.file_read(last) == rsize):
                 lsize = '0'
                 os.unlink(sfile)
-                # PGP signatures are small in size and it's easy for the
-                # fetcher to get confused if the file to be download is
-                # re-uploaded with minimal changes so force the signature fetch
+                # re-fetch the PGP signature as well
                 sig = self.gpg_findsig(sfile)
                 if os.path.isfile(sig):
                     os.unlink(sig)
@@ -683,13 +683,17 @@ class Misc(object):
         self.dir_create(os.path.dirname(sfile))
         lfile = open(sfile, 'ab', self.BUFFER)
         try:
-            # since the local file size changes use persistent units based on
-            # remote file size (which is not much of persistent when the
-            # transfer is chunked, doh! proper content-lenght _may_ be sent
-            # on the next request but that's is too much to ask for from
-            # the server and internet provider)
             units = self.string_unit_guess(rsize)
+            icount = 0
             while True:
+                # request size again, if needed
+                if encoding == 'chunked':
+                    if rsize == '0' and icount == 5:
+                        trfile = self.fetch_request(surl)
+                        rsize = trfile.headers.get('Content-Length', '0')
+                        units = self.string_unit_guess(rsize)
+                        icount = 0
+                    icount += 1
                 msg = 'Downloading: %s, %s/%s' % (self.url_normalize(surl, True), \
                     self.string_unit(str(os.path.getsize(sfile)), units), \
                     self.string_unit(rsize, units, True))
@@ -698,7 +702,6 @@ class Misc(object):
                 if not chunk:
                     break
                 lfile.write(chunk)
-                # in Python 3000 that would be print(blah, end='')
                 sys.stdout.write('\r' * len(msg))
                 sys.stdout.flush()
         finally:
@@ -950,7 +953,7 @@ class Misc(object):
             different than None. if something goes wrong you get standard
             output (stdout) and standard error (stderr) as an Exception '''
         if self.python2:
-            self.typecheck(command, (types.StringType, types.TupleType, types.ListType))
+            self.typecheck(command, (types.StringTypes, types.TupleType, types.ListType))
             self.typecheck(bshell, (types.BooleanType))
             self.typecheck(cwd, (types.NoneType, types.StringTypes))
             self.typecheck(sinput, (types.NoneType, types.StringTypes))
@@ -988,6 +991,8 @@ class Misc(object):
         if 'L' in sflags:
             fixedoutput = []
             for line in output.split(','):
+                # checking line being '' is neccessary because a bug in scanelf that
+                # produces a list with empty entry, it happens when '-L' is used
                 if line and not line.startswith('/'):
                     for libpath in ('/lib', '/usr/lib'):
                         sfull = '%s/%s' % (libpath, os.path.basename(line))
@@ -1250,54 +1255,5 @@ class Magic(object):
                 return 'application/octet-stream'
             raise Exception(self.error())
         return result
-
-class UDev(object):
-    ''' UDev wrapper '''
-    def __init__(self):
-        libudev = ctypes.util.find_library('udev')
-        self.libudev = ctypes.CDLL(libudev, use_errno=True)
-        self.udev = self.libudev.udev_new()
-        if not self.udev:
-            raise Exception('Can not get udev context')
-
-        self._udev_device_get_property_value = self.libudev.udev_device_get_property_value
-        self._udev_device_get_property_value.restype = ctypes.c_char_p
-        self._udev_device_get_property_value.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-
-        self._udev_device_get_sysattr_value = self.libudev.udev_device_get_sysattr_value
-        self._udev_device_get_sysattr_value.restype = ctypes.c_char_p
-        self._udev_device_get_sysattr_value.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-
-        self._udev_device_get_subsystem = self.libudev.udev_device_get_subsystem
-        self._udev_device_get_subsystem.restype = ctypes.c_char_p
-        self._udev_device_get_subsystem.argtypes = [ctypes.c_void_p]
-
-        self._udev_device_get_action = self.libudev.udev_device_get_action
-        self._udev_device_get_action.restype = ctypes.c_char_p
-        self._udev_device_get_action.argtypes = [ctypes.c_void_p]
-
-    def __exit__(self, type, value, traceback):
-        if self.udev:
-            self.libudev.udev_unref(self.udev)
-
-    def get_property(self, dev, tag):
-        ''' Get property of device '''
-        return self._udev_device_get_property_value(dev, tag)
-
-    def get_sysattr(self, dev, tag):
-        ''' Get sysfs attribute of device '''
-        return self._udev_device_get_sysattr_value(dev, tag)
-
-    def get_subsystem(self, dev):
-        ''' Get subsystem of device '''
-        return self._udev_device_get_subsystem(dev)
-
-    def get_action(self, dev):
-        ''' Get action of device '''
-        return self._udev_device_get_action(dev)
-
-    def error(self):
-        ''' Get last error as string '''
-        return ctypes.get_errno()
 
 misc = Misc()
