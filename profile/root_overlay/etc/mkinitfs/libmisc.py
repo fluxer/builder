@@ -53,6 +53,7 @@ class Misc(object):
             self.python2 = True
         else:
             self.python3 = True
+        self._elfx = re.compile('\[(.*)\]')
         # legal are [a-zA-Z_][a-zA-Z0-9_]+
         self._illegalx = re.compile('\\-|\\!|\\@|\\#|\\$|\\%|\\^|\\.|\\,|\\[|\\]|\\+|\\>|\\<|\\"|\\||\\=|\\(|\\)')
 
@@ -273,7 +274,7 @@ class Misc(object):
             escape=escape)
 
     def file_mime(self, sfile, bresolve=False, bquick=False):
-        ''' Get file type, you should propably use Magic().get() instead '''
+        ''' Get file type '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
             self.typecheck(bresolve, (types.BooleanType))
@@ -529,10 +530,6 @@ class Misc(object):
 
         slist = []
         for root, subdirs, files in os.walk(sdir, btopdown):
-            if not bcross:
-                subdirs[:] = [
-                    d for d in subdirs
-                    if not os.path.ismount('%s/%s' % (root, d))]
             for sfile in files:
                 slist.append('%s/%s' % (root, sfile))
         return slist
@@ -546,12 +543,11 @@ class Misc(object):
 
         slist = []
         for root, subdirs, files in os.walk(sdir, btopdown):
-            if not bcross:
-                subdirs[:] = [
-                    d for d in subdirs
-                    if not os.path.ismount('%s/%s' % (root, d))]
             for d in subdirs:
-                slist.append('%s/%s' % (root, d))
+                sfull = '%s/%s' % (root, d)
+                if not bcross and os.path.ismount(sfull):
+                    continue
+                slist.append(sfull)
         return slist
 
     def list_all(self, sdir, bcross=True, btopdown=True):
@@ -563,12 +559,11 @@ class Misc(object):
 
         slist = []
         for root, subdirs, files in os.walk(sdir, btopdown):
-            if not bcross:
-                subdirs[:] = [
-                    d for d in subdirs
-                    if not os.path.ismount('%s/%s' % (root, d))]
             for d in subdirs:
-                slist.append('%s/%s' % (root, d))
+                sfull = '%s/%s' % (root, d)
+                if not bcross and os.path.ismount(sfull):
+                    continue
+                slist.append(sfull)
             for sfile in files:
                 slist.append('%s/%s' % (root, sfile))
         return slist
@@ -830,23 +825,18 @@ class Misc(object):
             return True
         return False
 
-    def archive_compress(self, lpaths, sfile, sstrip, ilevel=9):
-        ''' Create archive from list of files and/or directories
-
-            ilevel is compression level integer between 0 and 9 that applies
-            only to Tar, gzip and Bzip2 archives '''
+    def archive_compress(self, lpaths, sfile, sstrip):
+        ''' Create archive from list of files and/or directories '''
         if self.python2:
             self.typecheck(lpaths, (types.TupleType, types.ListType))
             self.typecheck(sfile, (types.StringTypes))
             self.typecheck(sstrip, (types.StringTypes))
-            self.typecheck(ilevel, (types.IntType))
 
         self.dir_create(os.path.dirname(sfile))
 
         sextension = self.file_extension(sfile)
         if sfile.endswith(('tar.bz2', '.tar.gz')):
-            tarf = tarfile.open(sfile, 'w:%s' % sextension, \
-                compresslevel=ilevel)
+            tarf = tarfile.open(sfile, 'w:%s' % sextension)
             try:
                 for item in lpaths:
                     tarf.add(item, self.string_lstrip(item, sstrip))
@@ -868,13 +858,13 @@ class Misc(object):
         elif sfile.endswith('.gz'):
             if len(lpaths) > 1:
                 raise Exception('GZip', 'format can hold only single file')
-            gzipf = gzip.GzipFile(sfile, 'wb', compresslevel=ilevel)
+            gzipf = gzip.GzipFile(sfile, 'wb')
             gzipf.write(self.string_encode(self.file_read(lpaths[0])))
             gzipf.close()
         elif sfile.endswith('.bz2'):
             if len(lpaths) > 1:
                 raise Exception('BZip', 'format can hold only single file')
-            bzipf = bz2.BZ2File(sfile, 'wb', compresslevel=ilevel)
+            bzipf = bz2.BZ2File(sfile, 'wb')
             bzipf.write(self.string_encode(self.file_read(lpaths[0])))
             bzipf.close()
         else:
@@ -949,7 +939,7 @@ class Misc(object):
         ''' Get output and optionally send input to external utility
 
             it sets the environment variable LC_ALL to "en_US.UTF-8" to ensure
-            locales are not respected, passing input is possible if sinput is
+            locales are UTF-8 aware, passing input is possible if sinput is
             different than None. if something goes wrong you get standard
             output (stdout) and standard error (stderr) as an Exception '''
         if self.python2:
@@ -977,31 +967,28 @@ class Misc(object):
             raise(Exception('%s %s' % (out, err)))
         return self.string_encode(out.strip())
 
-    def system_scanelf(self, sfile, sformat='#F%n', sflags=''):
-        ''' Get information about ELF files '''
+    def system_readelf(self, sfile):
+        ''' Get full paths to ELF file dependencies '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
-            self.typecheck(sformat, (types.StringTypes))
-            self.typecheck(sflags, (types.StringTypes))
 
-        output = self.system_communicate((self.whereis('scanelf'), '-yCBF', \
-            sformat, sflags, sfile))
-        # workaround some libc implementations not support ld cache and
-        # scanelf popping base names instead of full paths even with -L
-        if 'L' in sflags:
-            fixedoutput = []
-            for line in output.split(','):
-                # checking line being '' is neccessary because a bug in scanelf that
-                # produces a list with empty entry, it happens when '-L' is used
-                if line and not line.startswith('/'):
-                    for libpath in ('/lib', '/usr/lib'):
-                        sfull = '%s/%s' % (libpath, os.path.basename(line))
-                        if os.path.exists(sfull):
-                            fixedoutput.append(os.path.realpath(sfull))
-            fixedoutput = ','.join(fixedoutput)
-            if fixedoutput and not output == fixedoutput:
-                return fixedoutput
-        return output
+        lpaths = []
+        smime = self.file_mime(sfile, bquick=True)
+        if not smime in ('application/x-executable', 'application/x-sharedlib'):
+            return lpaths
+
+        lldpath = ['/lib', '/lib32', '/lib64', '/usr/lib', '/usr/lib32', '/usr/lib64']
+        sldpath = os.environ.get('LD_LIBRARY_PATH', '')
+        for spath in sldpath.split(':'):
+            lldpath.append(spath)
+
+        output = self.system_communicate((self.whereis('readelf'), '-d', sfile))
+        for smatch in self._elfx.findall(output):
+            for spath in lldpath:
+                sfull = '%s/%s' % (spath, smatch)
+                if os.path.isfile(sfull):
+                    lpaths.append(sfull)
+        return lpaths
 
     def system_command(self, command, bshell=False, cwd=''):
         ''' Execute system command safely
@@ -1095,27 +1082,10 @@ class Misc(object):
 class Inotify(object):
     ''' Inotify wrapper '''
     def __init__(self):
-        self.ACCESS = 0x00000001        # IN_ACCESS
-        self.MODIFY = 0x00000002        # IN_MODIFY
-        self.ATTRIB = 0x00000004        # IN_ATTRIB
-        self.CLOSE_WRITE = 0x00000008   # IN_CLOSE_WRITE
-        self.CLOSE_NOWRITE = 0x00000010 # IN_CLOSE_NOWRITE
-        self.OPEN = 0x00000020          # IN_OPEN
-        self.MOVED_FROM = 0x00000040    # IN_MOVED_FROM
-        self.MOVED_TO = 0x00000080      # IN_MOVED_TO
-        self.CREATE = 0x00000100        # IN_CREATE
-        self.DELETE = 0x00000200        # IN_DELETE
-        self.DELETE_SELF = 0x00000400   # IN_DELETE_SELF
-        self.MOVE_SELF = 0x00000800     # IN_MOVE_SELF
-        self.UNMOUNT = 0x00002000       # IN_UNMOUNT
-        self.OVERFLOW = 0x00004000      # IN_Q_OVERFLOW
-        self.IGNORED = 0x00008000       # IN_IGNORED
-        self.ONLYDIR = 0x01000000       # IN_ONLYDIR
-        self.DONT_FOLLOW = 0x02000000   # IN_DONT_FOLLOW
-        self.EXCL_UNLINK = 0x04000000   # IN_EXCL_UNLINK
-        self.MASK_ADD = 0x20000000      # IN_MASK_ADD
-        self.ISDIR = 0x40000000         # IN_ISDIR
-        self.ONESHOT = 0x80000000       # IN_ONESHOT
+        self.MODIFY = 0x00000002        # Notify about modifications
+        self.CREATE = 0x00000100        # Notify about new files/directories
+        self.DELETE = 0x00000200        # Notify about deleted files/directories
+        self.DEFAULT = self.MODIFY | self.CREATE | self.DELETE
 
         # sysctl -n fs.inotify.max_user_watches
         self.watched = {}
@@ -1154,7 +1124,7 @@ class Inotify(object):
     def watch_add(self, spath, mask=None):
         ''' Add path to watcher '''
         if not mask:
-            mask = self.MODIFY | self.CREATE | self.DELETE
+            mask = self.DEFAULT
         wd = self.libc.inotify_add_watch(self.fd, misc.string_encode(spath), mask)
         if wd < 0:
             raise Exception('Inotfiy', self.error())
@@ -1193,38 +1163,17 @@ class Inotify(object):
 class Magic(object):
     ''' Magic wrapper '''
     def __init__(self):
-        self.NONE = 0x000000            # No flags
-        self.DEBUG = 0x000001           # Turn on debugging
-        self.SYMLINK = 0x000002         # Follow symlinks
-        self.COMPRESS = 0x000004        # Check inside compressed files
-        self.DEVICES = 0x000008         # Look at the contents of devices
         self.MIME_TYPE = 0x000010       # Return the MIME type
-        self.CONTINUE = 0x000020        # Return all matches
-        self.CHECK = 0x000040           # Print warnings to stderr
         self.PRESERVE_ATIME = 0x000080  # Restore access time on exit
-        self.RAW = 0x000100             # Don't translate unprintable chars
-        self.ERROR = 0x000200           # Handle ENOENT etc as real errors
-        self.MIME_ENCODING = 0x000400   # Return the MIME encoding
-        self.MIME = self.MIME_TYPE | self.MIME_ENCODING
-        self.APPLE = 0x000800           # Return the Apple creator and type
         self.NO_CHECK_COMPRESS = 0x001000 # Don't check for compressed files
         self.NO_CHECK_TAR = 0x002000    # Don't check for tar files
-        self.NO_CHECK_SOFT = 0x004000   # Don't check magic entries
-        self.NO_CHECK_APPTYPE = 0x008000 # Don't check application type
-        self.NO_CHECK_ELF = 0x010000    # Don't check for elf details
-        self.NO_CHECK_TEXT = 0x020000   # Don't check for text files
-        self.NO_CHECK_CDF = 0x040000    # Don't check for cdf files
-        self.NO_CHECK_TOKENS = 0x100000 # Don't check ascii/tokens
         self.NO_CHECK_ENCODING = 0x200000 # Don't check text encodings
-        self.NO_CHECK_BUILTIN = self.NO_CHECK_COMPRESS | self.NO_CHECK_TAR | \
-            self.NO_CHECK_SOFT | self.NO_CHECK_APPTYPE | self.NO_CHECK_ELF | \
-            self.NO_CHECK_TEXT | self.NO_CHECK_CDF | self.NO_CHECK_TOKENS | \
-            self.NO_CHECK_ENCODING
+        self.DEFAULT = self.MIME_TYPE | self.PRESERVE_ATIME | \
+            self.NO_CHECK_ENCODING # | self.NO_CHECK_COMPRESS | self.NO_CHECK_TAR
 
         libmagic = ctypes.util.find_library('magic')
         self.libmagic = ctypes.CDLL(libmagic, use_errno=True)
-        self.flags = self.MIME_TYPE | self.PRESERVE_ATIME | \
-            self.NO_CHECK_ENCODING # | self.NO_CHECK_COMPRESS | self.NO_CHECK_TAR
+        self.flags = self.DEFAULT
         self.cookie = self.libmagic.magic_open(self.flags)
         self.libmagic.magic_load(self.cookie, None)
 
@@ -1238,7 +1187,7 @@ class Magic(object):
 
     def error(self):
         ''' Get last error as string '''
-        return ctypes.get_errno()
+        return os.strerror(ctypes.get_errno())
 
     def get(self, path):
         ''' Get MIME type of path '''
@@ -1249,8 +1198,8 @@ class Magic(object):
         result = self._magic_file(self.cookie, path)
         if not result or result == -1:
             # libmagic 5.09 has a bug where it might fail to identify the
-            # mimetype of a file and returns null from magic_file (and
-            # likely _buffer), but also does not return an error message.
+            # mimetype of a file and returns null from magic_file, but also
+            # does not return an error message.
             if (self.flags & self.MIME_TYPE):
                 return 'application/octet-stream'
             raise Exception(self.error())

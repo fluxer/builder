@@ -67,12 +67,13 @@ class Message(object):
             variant = variant.encode('utf-8')
         return variant
 
-    def base(self, prefix, msg, marker, status, printer=sys.stdout):
+    def base(self, prefix, msg, marker, status):
         ''' Base printer '''
         msgcolor = ''
         markcolor = ''
         markmsg = ''
         marklog = ''
+        printer=sys.stdout
         if status == syslog.LOG_DEBUG:
             if not self.DEBUG:
                 return
@@ -83,9 +84,11 @@ class Message(object):
                 raise Exception(msg, marker)
             elif self.CATCH:
                 raise Exception(msg)
+            printer = sys.stderr
             msgcolor = self.ccritical
             markcolor = self.ccritical
         elif status == syslog.LOG_ALERT:
+            printer = sys.stderr
             msgcolor = self.cwarning
             markcolor = self.cwarning
         elif status == syslog.LOG_INFO:
@@ -109,11 +112,11 @@ class Message(object):
 
     def warning(self, msg, marker=None):
         ''' Print message with warning status '''
-        self.base('*', msg, marker, syslog.LOG_ALERT, sys.stderr)
+        self.base('*', msg, marker, syslog.LOG_ALERT)
 
     def critical(self, msg, marker=None):
         ''' Print message with critical status '''
-        self.base('*', msg, marker, syslog.LOG_CRIT, sys.stderr)
+        self.base('*', msg, marker, syslog.LOG_CRIT)
 
     def debug(self, msg, marker=None):
         ''' Print message with debug status '''
@@ -125,11 +128,11 @@ class Message(object):
 
     def sub_warning(self, msg, marker=None):
         ''' Print message with warning status '''
-        self.base('  ->', msg, marker, syslog.LOG_ALERT, sys.stderr)
+        self.base('  ->', msg, marker, syslog.LOG_ALERT)
 
     def sub_critical(self, msg, marker=None):
         ''' Print message with critical status '''
-        self.base('  =>', msg, marker, syslog.LOG_CRIT, sys.stderr)
+        self.base('  =>', msg, marker, syslog.LOG_CRIT)
 
     def sub_debug(self, msg, marker=None):
         ''' Print message with debug status '''

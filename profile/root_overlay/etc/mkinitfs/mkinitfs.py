@@ -2,7 +2,7 @@
 
 import sys, argparse, tempfile, subprocess, shutil, os, gzip, bz2, glob, ast, re
 
-app_version = "1.10.1 (c3061ad)"
+app_version = "1.10.1 (ceba9eb)"
 
 tmpdir = None
 keep = False
@@ -130,13 +130,11 @@ try:
             shutil.copytree(src, sdest, symlinks=True)
             lcopied.append(src)
         elif os.path.isfile(src):
-            ltocopy = misc.system_scanelf(src, sflags='-L').split(',')
+            ltocopy = misc.system_readelf(src)
             ltocopy.append(src)
             for sfile in ltocopy:
                 if sfile in lcopied:
                     message.sub_debug('Already copied', sfile)
-                    continue
-                elif not sfile:
                     continue
                 sfixed = sfile.replace('/etc/mkinitfs/root', '')
                 if os.path.islink(sfile):
