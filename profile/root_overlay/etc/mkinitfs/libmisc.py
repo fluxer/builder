@@ -9,16 +9,10 @@ processes handling.
 Magic() is specifiec to file types (MIMEs) recognition via libmagic (part of
 file). It is a thin wrapper around it.
 
-Inotify() is another wrapper but around inotify system calls. It can be used
-to monitor for file/directory changes on filesystems.
-
 '''
 
 import sys, os, re, tarfile, zipfile, subprocess, shutil, shlex, inspect, json
-import types, gzip, bz2, time, ctypes, ctypes.util, getpass, base64, hashlib
-from struct import unpack
-from fcntl import ioctl
-from termios import FIONREAD
+import types, gzip, bz2, ctypes, ctypes.util, hashlib
 if int(sys.version_info[0]) < 3:
     from urlparse import urlparse
     from urllib2 import urlopen
@@ -85,15 +79,6 @@ class Misc(object):
                 raise OSError('Program not found in PATH (%s)' % self.ROOT_DIR, program)
             raise OSError('Program not found in PATH', program)
 
-    def getpass(self, sprompt='Password: '):
-        ''' Get password from user input '''
-        if self.python2:
-            self.typecheck(sprompt, (types.StringTypes))
-
-        if not sys.stdin.isatty():
-            raise Exception('Standard input is not a TTY')
-        return getpass.getpass(sprompt)
-
     def string_encode(self, string):
         ''' String wrapper to ensure Python3 compat '''
         if self.python3 and isinstance(string, bytes):
@@ -104,7 +89,10 @@ class Misc(object):
             return string
 
     def string_convert(self, variant):
-        ''' Convert input to string but only if it is not string '''
+        ''' Convert input to string but only if it is not string
+        
+            this method exists mostly because it can convert both Python2 and Python3
+            dictionaries '''
         if isinstance(variant, (list, tuple)):
             return ' '.join(variant)
         elif isinstance(variant, dict):
@@ -198,7 +186,7 @@ class Misc(object):
         if len(schars) == 0:
             return string
         toreplace = string[-len(schars):]
-        return '%s%s' % (string[:len(string)-len(schars)], toreplace.replace(schars, sreplacement))
+        return '%s%s' % (string[:len(string) - len(schars)], toreplace.replace(schars, sreplacement))
 
     def file_name(self, sfile, basename=True):
         ''' Get name of file without the extension '''
@@ -242,7 +230,10 @@ class Misc(object):
         ''' Write data to file safely
 
             the cool thing about this helper is that it does not dump files if
-            it fails to write to it unless the mode is "a" (append) '''
+            it fails to write to it unless the mode is "a" (append) or
+            combination of "a" and other modes in which case the file may be
+            written to from multiple processes or even threads with lock
+            handler outside the scope of this method (e.g. logging to file) '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
             self.typecheck(content, (types.StringTypes))
@@ -366,29 +357,18 @@ class Misc(object):
         with open(sfile, mode, self.BUFFER) as f:
             json.dump(content, f, indent=4)
 
-    def gpg_findsig(self, sfile, bensure=True):
+    def gpg_findsig(self, sfile):
         ''' Attempt to guess the signature for local file '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
-            self.typecheck(bensure, (types.BooleanType))
 
-        sig1 = '%s.sig' % sfile
-        sig2 = '%s.asc' % sfile
-        sig3 = '%s.asc' % self.file_name(sfile, False)
-        sig4 = '%s.sign' % self.file_name(sfile, False)
-        sig5 = '%s.sign' % sfile
-        if os.path.isfile(sig1):
-            return sig1
-        elif os.path.isfile(sig2):
-            return sig2
-        elif not sfile.endswith('.asc') and os.path.isfile(sig3):
-            return sig3
-        elif not sfile.endswith('.sign') and os.path.isfile(sig4):
-            return sig4
-        elif not sfile.endswith('.sign') and os.path.isfile(sig5):
-            return sig5
-        elif bensure:
-            return sig1
+        for sext in ('sig', 'asc', 'sign'):
+            sig1 = '%s.%s' % (sfile, sext)
+            sig2 = '%s.%s' % (self.file_name(sfile, False), sext)
+            if not sfile.endswith(sext) and os.path.isfile(sig1):
+                return sig1
+            elif not sfile.endswith(sext) and os.path.isfile(sig2):
+                return sig2
 
     def gpg_receive(self, lkeys, lservers=None, stag=''):
         ''' Import PGP keys as (somewhat) trusted '''
@@ -411,39 +391,21 @@ class Misc(object):
         cmd.extend(lkeys)
         self.system_command(cmd)
 
-    def gpg_sign(self, sfile, skey=None, sprompt='Passphrase: '):
-        ''' Sign a file with PGP signature via GnuPG '''
-        if self.python2:
-            self.typecheck(sfile, (types.StringTypes))
-            self.typecheck(skey, (types.NoneType, types.StringTypes))
-            self.typecheck(sprompt, (types.StringTypes))
-
-        self.dir_create(self.GPG_DIR, ipermissions=0o700)
-        gpg = self.whereis('gpg2', False) or self.whereis('gpg')
-        cmd = [gpg, '--homedir', self.GPG_DIR]
-        if skey:
-            cmd.extend(('--default-key', skey))
-        cmd.extend(('--yes', '--no-tty', '--passphrase-fd', '0'))
-        cmd.extend(('--detach-sig', '--sign', '--batch', sfile))
-        if not self.SIGNPASS:
-            self.SIGNPASS = base64.encodestring(self.getpass(sprompt))
-        self.system_communicate(cmd, sinput=base64.decodestring(self.SIGNPASS))
-
-    def gpg_verify(self, sfile, ssignature=None, stag=''):
+    def gpg_verify(self, sfile, ssignature, stag=''):
         ''' Verify file PGP signature via GnuPG '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
-            self.typecheck(ssignature, (types.NoneType, types.StringTypes))
+            self.typecheck(ssignature, (types.StringTypes))
             self.typecheck(stag, (types.StringTypes))
 
         gpgtagdir = '%s/%s' % (self.GPG_DIR, stag)
         self.dir_create(gpgtagdir, ipermissions=0o700)
         gpg = self.whereis('gpg2', False) or self.whereis('gpg')
-        if not ssignature:
-            ssignature = self.gpg_findsig(sfile)
         shell = False
         if ssignature.endswith(('.tar.sign', '.tar.asc')):
             # exception for no gain, get piped!
+            # NOTE: wrapping processes for piping is risky, spawining a shell just as much
+            # https://docs.python.org/2/library/subprocess.html#frequently-used-arguments
             shell = True
             if sfile.endswith('.xz'):
                 cmd = '%s -cdk ' % self.whereis('unxz')
@@ -521,11 +483,10 @@ class Misc(object):
             cwd = sdir
         return cwd
 
-    def list_files(self, sdir, bcross=True, btopdown=True):
+    def list_files(self, sdir, btopdown=True):
         ''' Get list of files in directory recursively '''
         if self.python2:
             self.typecheck(sdir, (types.StringTypes))
-            self.typecheck(bcross, (types.BooleanType))
             self.typecheck(btopdown, (types.BooleanType))
 
         slist = []
@@ -534,6 +495,7 @@ class Misc(object):
                 slist.append('%s/%s' % (root, sfile))
         return slist
 
+    # TODO: make bcross last argument
     def list_dirs(self, sdir, bcross=True, btopdown=True):
         ''' Get list of directories in directory recursively '''
         if self.python2:
@@ -550,6 +512,7 @@ class Misc(object):
                 slist.append(sfull)
         return slist
 
+    # TODO: make bcross last argument '''
     def list_all(self, sdir, bcross=True, btopdown=True):
         ''' Get list of files and directories in directory recursively '''
         if self.python2:
@@ -800,7 +763,7 @@ class Misc(object):
                 raise Exception('Unsupported URL', surl)
         except (HTTPError, URLError) as detail:
             if not iretry == 0:
-                return self.fetch(surl, destination, mymirrors, ssuffix, iretry-1)
+                return self.fetch(surl, destination, mymirrors, ssuffix, iretry - 1)
             setattr(detail, 'url', surl)
             raise detail
 
@@ -988,6 +951,7 @@ class Misc(object):
                 sfull = '%s/%s' % (spath, smatch)
                 if os.path.isfile(sfull):
                     lpaths.append(sfull)
+                    break
         return lpaths
 
     def system_command(self, command, bshell=False, cwd=''):
@@ -1079,97 +1043,13 @@ class Misc(object):
                 os.remove(stmp)
 
 
-class Inotify(object):
-    ''' Inotify wrapper '''
-    def __init__(self):
-        self.MODIFY = 0x00000002        # Notify about modifications
-        self.CREATE = 0x00000100        # Notify about new files/directories
-        self.DELETE = 0x00000200        # Notify about deleted files/directories
-        self.DEFAULT = self.MODIFY | self.CREATE | self.DELETE
-
-        # sysctl -n fs.inotify.max_user_watches
-        self.watched = {}
-        libc = ctypes.util.find_library('c')
-        self.libc = ctypes.CDLL(libc, use_errno=True)
-        self.fd = self.libc.inotify_init()
-        if self.fd == -1:
-            raise Exception('Inotify', self.error())
-
-    def __exit__(self, type, value, traceback):
-        self.close()
-
-    def error(self):
-        ''' Get last error as string '''
-        return os.strerror(ctypes.get_errno())
-
-    def event_read(self):
-        ''' Read event from the inotify file descriptor '''
-        size_int = ctypes.c_int()
-        while ioctl(self.fd, FIONREAD, size_int) == -1:
-            time.sleep(1)
-        size = size_int.value
-        if not size:
-            return
-        data = os.read(self.fd, size)
-        deb = 0
-        while deb < size:
-            fin = deb+16
-            wd, mask, cookie, name_len = unpack('iIII', data[deb:fin])
-            deb, fin = fin, fin+name_len
-            name = unpack('%ds' % name_len, data[deb:fin])
-            name = misc.string_encode(name[0]).rstrip('\0')
-            deb = fin
-            yield wd, mask, cookie, name
-
-    def watch_add(self, spath, mask=None):
-        ''' Add path to watcher '''
-        if not mask:
-            mask = self.DEFAULT
-        wd = self.libc.inotify_add_watch(self.fd, misc.string_encode(spath), mask)
-        if wd < 0:
-            raise Exception('Inotfiy', self.error())
-        self.watched[spath] = wd
-        return wd
-
-    def watch_remove(self, spath):
-        ''' Remove path from watcher '''
-        if not spath in self.watched:
-            return
-        wd = self.watched[spath]
-        ret = self.libc.inotify_rm_watch(self.fd, wd)
-        if ret < 0:
-            raise Exception('Inotify', self.error())
-        self.watched.pop(spath)
-
-    def watch_list(self):
-        ''' Get a list of paths watched '''
-        return list(self.watched.keys())
-
-    def watch_loop(self, lpaths, callback, mask=None):
-        ''' Start watching for events '''
-        for path in lpaths:
-            self.watch_add(path, mask)
-        while True:
-            for wd, mask, cookie, name in self.event_read():
-                callback((wd, mask, cookie, name))
-            time.sleep(1)
-
-    def close(self):
-        ''' Close inotify descriptor '''
-        if self.fd:
-            os.close(self.fd)
-
-
 class Magic(object):
     ''' Magic wrapper '''
     def __init__(self):
-        self.MIME_TYPE = 0x000010       # Return the MIME type
-        self.PRESERVE_ATIME = 0x000080  # Restore access time on exit
-        self.NO_CHECK_COMPRESS = 0x001000 # Don't check for compressed files
-        self.NO_CHECK_TAR = 0x002000    # Don't check for tar files
-        self.NO_CHECK_ENCODING = 0x200000 # Don't check text encodings
-        self.DEFAULT = self.MIME_TYPE | self.PRESERVE_ATIME | \
-            self.NO_CHECK_ENCODING # | self.NO_CHECK_COMPRESS | self.NO_CHECK_TAR
+        self.MIME_TYPE = 0x000010          # Return the MIME type
+        self.PRESERVE_ATIME = 0x000080     # Restore access time on exit
+        self.NO_CHECK_ENCODING = 0x200000  # Don't check text encodings
+        self.DEFAULT = self.MIME_TYPE | self.PRESERVE_ATIME | self.NO_CHECK_ENCODING
 
         libmagic = ctypes.util.find_library('magic')
         self.libmagic = ctypes.CDLL(libmagic, use_errno=True)

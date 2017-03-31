@@ -73,7 +73,7 @@ class Message(object):
         markcolor = ''
         markmsg = ''
         marklog = ''
-        printer=sys.stdout
+        printer = sys.stdout
         if status == syslog.LOG_DEBUG:
             if not self.DEBUG:
                 return
