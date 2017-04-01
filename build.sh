@@ -198,7 +198,7 @@ Chroot() {
 #============= Prepare the root filesystem and copy kernel images ==============#
 
 Build() {
-    local sfs size modules format linux vmlinuz iso
+    local sfs size modules format efi linux vmlinuz iso
 
     msg "Removing previous initramfs image files"
     find "${FILESYSTEM_DIR}/boot/" -name "*.img" -delete || die
@@ -240,13 +240,17 @@ Build() {
     #========================== Prepare EFI/UEFI ==========================#
     modules="boot chain configfile fat ext2 linux normal ntfs part_gpt part_msdos"
     format=""
+    efi="${ISO_DIR}/efi.img"
     for dir in /lib/grub /usr/lib/grub;do
         [ -d "$dir/i386-efi" ] && format="i386-efi"
         [ -d "$dir/x86_64-efi" ] && format="x86_64-efi"
     done
-    if [ -n "$format" ];then
+    if [[ -n "$format" && -n $(which mformat) ]];then
         msg "Creating EFI image"
-        grub-mkimage -o "${ISO_DIR}/efi.img" -O "$format" -p "" $modules || die
+        grub-mkimage -o "${efi}" -O "$format" -p "" $modules || die
+    else
+        warn "Either GRUB does not support EFI or mtools is not installed"
+        rm -f "${efi}"
     fi
 
     #========================= Create ISO image ===========================#
