@@ -85,7 +85,7 @@ unmount_pseudo() {
 cd "${0%/*}" || die
 
 runtime_check() {
-    if [ "$UID" != "0" ];then
+    if [ "$(id -u)" != "0" ];then
         error "You are not root!"
         exit 1
     fi
