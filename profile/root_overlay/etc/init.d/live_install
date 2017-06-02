@@ -128,7 +128,7 @@ choose_disks_menu() {
         *) install_main_menu ;;
     esac
 
-    for t in "cfdisk" "sfdisk" "fdisk" "cparted" "parted";do
+    for t in "cfdisk" "sfdisk" "fdisk" "cparted" "parted" "cgdisk" "gdisk";do
         if [ -n "$(type -p ${t})" ];then
             tools_list="${tools_list} ${t} -"
         fi
