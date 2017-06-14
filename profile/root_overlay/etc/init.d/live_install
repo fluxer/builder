@@ -10,6 +10,33 @@ msg() {
     echo -e " >> $*"
 }
 
+getcolumns() {
+    if type -p tput ;then
+        # tput is a ncurses program
+        result="$(tput cols)"
+    elif type -p ttysize ;then
+        # ttysize is a Busybox applet
+        result="$(ttysize | cut -f1 -d' ')"
+    else
+        # last resort, dumb assumpsion
+        result=80
+    fi
+    let result="$result-2"
+    echo "$result"
+}
+
+getlines() {
+    if type -p tput ;then
+        result="$(tput lines)"
+    elif type -p ttysize ;then
+        result="$(ttysize | cut -f2 -d' ')"
+    else
+        result=20
+    fi
+    let result="$result-2"
+    echo "$result"
+}
+
 chroot_install_init() {
     msg "Copying host files to chroot"
     cp -f "/etc/resolv.conf" "${install_path}/etc/"
@@ -479,7 +506,7 @@ tmpfs\t/tmp\ttmpfs\tnodev,nosuid\t0\t0
 
     echo > "${i_store}/installed"
     } 2>&1 | dialog --title "Installing system, please be patient.." \
-        --programbox $(($(tput lines)-2)) $(($(tput cols)-2)) || \
+        --programbox $(getlines) $(getcolumns) || \
         dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
         --msgbox "The system installation failed" 6 40
 
@@ -500,7 +527,7 @@ install_grub_exec() {
     fi
 
     } 2>&1 | dialog --title "Installing GRUB. please be patient.." \
-        --programbox $(($(tput lines)-2)) $(($(tput cols)-2)) || \
+        --programbox $(getlines) $(getcolumns) || \
         dialog --backtitle "${i_backtitle}" --title '[ ERROR ]' \
         --msgbox "The GRUB installation failed" 6 40
 
