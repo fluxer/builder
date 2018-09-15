@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builder - a tool to create Live CD/DVD/USB GNU/Linux images
+# Builder - Bash script to build GNU/Linux Live CD/DVDs
 #
 # Copyright (c) 2012-2016, Ivailo Monev
 # All rights reserved.
@@ -263,7 +263,7 @@ Build() {
 
 Usage () {
 echo "
- Builder v4.3.0 - a tool to create CD/DVD/USB GNU/Linux images
+ Builder v4.3.0 - Bash script to build GNU/Linux Live CD/DVDs
 
   Usage: '# ${0##*/} <profile> <option> [<option>] [<option>]..'
 

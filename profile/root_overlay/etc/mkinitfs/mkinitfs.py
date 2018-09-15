@@ -1,8 +1,8 @@
 #!/usr/bin/python2
 
-import sys, argparse, tempfile, subprocess, shutil, os, gzip, bz2, glob, ast, re
+import sys, argparse, tempfile, subprocess, shutil, os, glob, ast, re
 
-app_version = "1.10.1 (e820f3a)"
+app_version = "1.10.1 (8303906)"
 
 tmpdir = None
 keep = False
@@ -169,16 +169,16 @@ try:
     def create_image(src, image, method):
         misc.system_command((ARGS.busybox, 'depmod', ARGS.kernel, '-b', ARGS.tmp))
 
-        data = misc.system_communicate('%s find . | %s cpio -o -H newc' % \
-            (ARGS.busybox, ARGS.busybox), bshell=True, cwd=src)
+        scommand = '%s find . | %s cpio -o -H newc' % \
+            (ARGS.busybox, ARGS.busybox)
         if method == 'gzip':
-            with gzip.GzipFile(image, 'wb') as gzipf:
-                gzipf.write(data)
+            scommand += ' | %s gzip > %s' % (ARGS.busybox, image)
         elif method == 'bzip2':
-            with bz2.BZ2File(image, 'wb') as bzipf:
-                bzipf.write(data)
+            scommand += ' | %s bzip2 > %s' % (ARGS.busybox, image)
         else:
-            misc.file_write(image, data)
+            scommand += ' > %s' % image
+
+        misc.system_command(scommand, bshell=True, cwd=src)
 
     message.info('Runtime information')
     message.sub_info('BUSYTEST', ARGS.busytest)

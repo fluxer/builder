@@ -9,10 +9,16 @@ processes handling.
 Magic() is specifiec to file types (MIMEs) recognition via libmagic (part of
 file). It is a thin wrapper around it.
 
+Inotify() is another wrapper but around inotify system calls. It can be used
+to monitor for file/directory changes on filesystems.
+
 '''
 
 import sys, os, re, tarfile, zipfile, subprocess, shutil, shlex, inspect, json
-import types, gzip, bz2, ctypes, ctypes.util, hashlib
+import types, time, ctypes, ctypes.util, hashlib, ssl
+from struct import unpack
+from fcntl import ioctl
+from termios import FIONREAD
 if int(sys.version_info[0]) < 3:
     from urlparse import urlparse
     from urllib2 import urlopen
@@ -36,8 +42,6 @@ class Misc(object):
         self.TIMEOUT = 30
         self.ROOT_DIR = '/'
         self.GPG_DIR = os.path.expanduser('~/.gnupg')
-        self.CATCH = False
-        self.SIGNPASS = None
         self.BUFFER = 10240
         self.SHELL = 'bash'
         self.magic = Magic()
@@ -47,7 +51,7 @@ class Misc(object):
             self.python2 = True
         else:
             self.python3 = True
-        self._elfx = re.compile('\[(.*)\]')
+        self._elfx = re.compile('Shared library: \[(.*)\]')
         # legal are [a-zA-Z_][a-zA-Z0-9_]+
         self._illegalx = re.compile('\\-|\\!|\\@|\\#|\\$|\\%|\\^|\\.|\\,|\\[|\\]|\\+|\\>|\\<|\\"|\\||\\=|\\(|\\)')
 
@@ -82,15 +86,15 @@ class Misc(object):
     def string_encode(self, string):
         ''' String wrapper to ensure Python3 compat '''
         if self.python3 and isinstance(string, bytes):
-            return string.decode('utf-8')
+            return string.decode('utf-8', 'ignore')
         elif self.python3 and isinstance(string, str):
-            return string.encode('utf-8')
+            return string.encode('utf-8', 'ignore')
         else:
             return string
 
     def string_convert(self, variant):
         ''' Convert input to string but only if it is not string
-        
+
             this method exists mostly because it can convert both Python2 and Python3
             dictionaries '''
         if isinstance(variant, (list, tuple)):
@@ -427,9 +431,9 @@ class Misc(object):
 
         since Python 3.2 os.makedirs accepts exist_ok argument so you may use
         it instead of this method, however it applies permissions on all
-        directories created - this one does not. it sets ipermissions on the
-        last directory of the path passed, for the leading paths the default
-        mask (0o777 usually) is used '''
+        directories created - this one does not. this one sets ipermissions on
+        the last directory of the path passed, for the leading paths the
+        default mask (0o777 usually) is used '''
         if self.python2:
             self.typecheck(sdir, (types.StringTypes))
             self.typecheck(ipermissions, (types.IntType))
@@ -495,8 +499,7 @@ class Misc(object):
                 slist.append('%s/%s' % (root, sfile))
         return slist
 
-    # TODO: make bcross last argument
-    def list_dirs(self, sdir, bcross=True, btopdown=True):
+    def list_dirs(self, sdir, btopdown=True, bcross=True):
         ''' Get list of directories in directory recursively '''
         if self.python2:
             self.typecheck(sdir, (types.StringTypes))
@@ -512,8 +515,7 @@ class Misc(object):
                 slist.append(sfull)
         return slist
 
-    # TODO: make bcross last argument '''
-    def list_all(self, sdir, bcross=True, btopdown=True):
+    def list_all(self, sdir, btopdown=True, bcross=True):
         ''' Get list of files and directories in directory recursively '''
         if self.python2:
             self.typecheck(sdir, (types.StringTypes))
@@ -598,8 +600,7 @@ class Misc(object):
             data = {}
         request = Request(surl, headers=data)
         # SSL verification works OOTB only on Python >= 2.7.9 and >=3.4.0 (officially)
-        if (self.python3 and sys.version_info[2] >= 4) or (self.python2 and sys.version_info[2] >= 9):
-            import ssl
+        if hasattr(ssl, 'create_default_context'):
             ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             return urlopen(request, timeout=self.TIMEOUT, context=ctx)
         else:
@@ -644,7 +645,7 @@ class Misc(object):
             units = self.string_unit_guess(rsize)
             icount = 0
             while True:
-                # request size again, if needed
+                # request size again, if needed and with some slack
                 if encoding == 'chunked':
                     if rsize == '0' and icount == 5:
                         trfile = self.fetch_request(surl)
@@ -700,8 +701,8 @@ class Misc(object):
         if self.OFFLINE:
             return
 
-        # the .svn url extension is fake made up for the sake of the fetcher
-        # to be able to recognize the protocol, strip it
+        # the .svn url ending is made up for the sake of the fetcher to be able
+        # to recognize the protocol, strip it
         surl = self.string_rstrip(surl, '.svn')
         svn = self.whereis('svn')
         if os.path.isdir('%s/.svn' % sdir):
@@ -795,7 +796,8 @@ class Misc(object):
             self.typecheck(sfile, (types.StringTypes))
             self.typecheck(sstrip, (types.StringTypes))
 
-        self.dir_create(os.path.dirname(sfile))
+        sdir = os.path.dirname(sfile)
+        self.dir_create(sdir)
 
         sextension = self.file_extension(sfile)
         if sfile.endswith(('tar.bz2', '.tar.gz')):
@@ -821,15 +823,13 @@ class Misc(object):
         elif sfile.endswith('.gz'):
             if len(lpaths) > 1:
                 raise Exception('GZip', 'format can hold only single file')
-            gzipf = gzip.GzipFile(sfile, 'wb')
-            gzipf.write(self.string_encode(self.file_read(lpaths[0])))
-            gzipf.close()
+            gzip = self.whereis('gzip')
+            self.system_command((gzip, '-k', lpaths[0]), cwd=sdir)
         elif sfile.endswith('.bz2'):
             if len(lpaths) > 1:
                 raise Exception('BZip', 'format can hold only single file')
-            bzipf = bz2.BZ2File(sfile, 'wb')
-            bzipf.write(self.string_encode(self.file_read(lpaths[0])))
-            bzipf.close()
+            bzip2 = self.whereis('bzip2')
+            self.system_command((bzip2, '-k', lpaths[0]), cwd=sdir)
         else:
             raise Exception('Unsupported format', sextension)
 
@@ -855,13 +855,11 @@ class Misc(object):
                 arguments = '-xpPf'
             self.system_command((tar, arguments, sfile, '-C', sdir))
         elif smime == 'application/x-gzip':
-            gfile = gzip.GzipFile(sfile, 'rb')
-            self.file_write(self.file_name(sfile, False), gfile.read())
-            gfile.close()
+            gunzip = self.whereis('gunzip')
+            self.system_command((gunzip, '-k', sfile), cwd=sdir)
         elif smime == 'application/x-bzip2':
-            bfile = bz2.BZ2File(sfile, 'rb')
-            self.file_write(self.file_name(sfile, False), bfile.read())
-            bfile.close()
+            bunzip2 = self.whereis('bunzip2')
+            self.system_command((bunzip2, '-k', sfile), cwd=sdir)
 
     def archive_list(self, sfile):
         ''' Get list of files in archive '''
@@ -898,55 +896,55 @@ class Misc(object):
             lcontent = self.file_name(sfile).split()
         return lcontent
 
-    def system_communicate(self, command, bshell=False, cwd=None, sinput=None):
+    def system_communicate(self, command, bshell=False, cwd=None):
         ''' Get output and optionally send input to external utility
 
             it sets the environment variable LC_ALL to "en_US.UTF-8" to ensure
-            locales are UTF-8 aware, passing input is possible if sinput is
-            different than None. if something goes wrong you get standard
+            locales are UTF-8 aware. if something goes wrong you get standard
             output (stdout) and standard error (stderr) as an Exception '''
         if self.python2:
             self.typecheck(command, (types.StringTypes, types.TupleType, types.ListType))
             self.typecheck(bshell, (types.BooleanType))
             self.typecheck(cwd, (types.NoneType, types.StringTypes))
-            self.typecheck(sinput, (types.NoneType, types.StringTypes))
 
         if not cwd or not os.path.isdir(cwd):
             cwd = self.dir_current()
         if isinstance(command, str) and not bshell:
             command = shlex.split(command)
-        stdin = None
-        if sinput:
-            stdin = subprocess.PIPE
         procenv = {}
         for var, val in os.environ.items():
             procenv[var] = val
         procenv['LC_ALL'] = 'en_US.UTF-8'
-        pipe = subprocess.Popen(command, stdin=stdin, \
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, \
-            env=procenv, shell=bshell, cwd=cwd)
-        out, err = pipe.communicate(input=sinput)
+        pipe = subprocess.Popen(command, stdout=subprocess.PIPE, \
+            stderr=subprocess.PIPE, env=procenv, shell=bshell, cwd=cwd)
+        out, err = pipe.communicate()
         if pipe.returncode != 0:
             raise(Exception('%s %s' % (out, err)))
         return self.string_encode(out.strip())
 
-    def system_readelf(self, sfile):
+    def system_readelf(self, sfile, bsearch=True):
         ''' Get full paths to ELF file dependencies '''
         if self.python2:
             self.typecheck(sfile, (types.StringTypes))
+            self.typecheck(bsearch, (types.BooleanType))
 
         lpaths = []
         smime = self.file_mime(sfile, bquick=True)
         if not smime in ('application/x-executable', 'application/x-sharedlib'):
             return lpaths
 
+        output = self.system_communicate((self.whereis('readelf'), '-d', sfile))
+        ldepends = self._elfx.findall(output)
+
+        if not bsearch:
+            return ldepends
+
         lldpath = ['/lib', '/lib32', '/lib64', '/usr/lib', '/usr/lib32', '/usr/lib64']
         sldpath = os.environ.get('LD_LIBRARY_PATH', '')
         for spath in sldpath.split(':'):
             lldpath.append(spath)
 
-        output = self.system_communicate((self.whereis('readelf'), '-d', sfile))
-        for smatch in self._elfx.findall(output):
+        for smatch in ldepends:
             for spath in lldpath:
                 sfull = '%s/%s' % (spath, smatch)
                 if os.path.isfile(sfull):
@@ -970,17 +968,9 @@ class Misc(object):
             cwd = self.dir_current()
         if isinstance(command, str) and not bshell:
             command = shlex.split(command)
-        stderr = None
-        if self.CATCH:
-            stderr = subprocess.PIPE
-        pipe = subprocess.Popen(command, stderr=stderr, shell=bshell, cwd=cwd)
-        pipe.wait()
-        if pipe.returncode != 0:
-            if self.CATCH:
-                raise(Exception(pipe.communicate()[1].strip()))
-            raise(subprocess.CalledProcessError(pipe.returncode, command))
+        subprocess.check_call(command, shell=bshell, cwd=cwd)
 
-    def system_chroot(self, command, bshell=False, sinput=None):
+    def system_chroot(self, command, bshell=False):
         ''' Execute command in chroot environment, conditionally
 
             The conditional is self.ROOT_DIR, if it equals / then the command
@@ -988,11 +978,8 @@ class Misc(object):
         if self.python2:
             self.typecheck(command, (types.StringType, types.TupleType, types.ListType))
             self.typecheck(bshell, (types.BooleanType))
-            self.typecheck(sinput, (types.NoneType, types.StringTypes))
 
         if self.ROOT_DIR == '/':
-            if sinput:
-                return self.system_communicate(command, bshell, sinput=sinput)
             return self.system_command(command, bshell)
 
         mount = self.whereis('mount')
@@ -1014,10 +1001,7 @@ class Misc(object):
                 if os.path.isdir(p) and not os.path.ismount(sdir):
                     self.dir_create(sdir)
                     self.system_command((mount, '--bind', p, sdir))
-            if sinput:
-                self.system_communicate(command, bshell, sinput=sinput)
-            else:
-                self.system_command(command, bshell)
+            self.system_command(command, bshell)
         finally:
             for p in pseudofs:
                 sdir = '%s%s' % (self.ROOT_DIR, p)
@@ -1043,6 +1027,69 @@ class Misc(object):
                 os.remove(stmp)
 
 
+class Inotify(object):
+    ''' Inotify wrapper '''
+    def __init__(self):
+        self.MODIFY = 0x00000002  # Notify about modifications
+        self.CREATE = 0x00000100  # Notify about new files/directories
+        self.DELETE = 0x00000200  # Notify about deleted files/directories
+        self.DEFAULT = self.MODIFY | self.CREATE | self.DELETE
+
+        # sysctl -n fs.inotify.max_user_watches
+        self.watched = {}
+        libc = ctypes.util.find_library('c')
+        self.libc = ctypes.CDLL(libc, use_errno=True)
+        self.fd = self.libc.inotify_init()
+        if self.fd == -1:
+            raise Exception('Inotify', self.error())
+
+    def __exit__(self, type, value, traceback):
+        os.close(self.fd)
+
+    def error(self):
+        ''' Get last error as string '''
+        return os.strerror(ctypes.get_errno())
+
+    def watch_event(self):
+        ''' Read event from the inotify file descriptor '''
+        size_int = ctypes.c_int()
+        while ioctl(self.fd, FIONREAD, size_int) == -1:
+            time.sleep(1)
+        size = size_int.value
+        if not size:
+            return
+        data = os.read(self.fd, size)
+        deb = 0
+        while deb < size:
+            fin = deb + 16
+            wd, mask, cookie, name_len = unpack('iIII', data[deb:fin])
+            deb, fin = fin, fin + name_len
+            name = unpack('%ds' % name_len, data[deb:fin])
+            name = misc.string_encode(name[0]).rstrip('\0')
+            deb = fin
+            yield wd, mask, cookie, name
+
+    def watch_add(self, spath, mask=None):
+        ''' Add path to watcher '''
+        if not mask:
+            mask = self.DEFAULT
+        wd = self.libc.inotify_add_watch(self.fd, misc.string_encode(spath), mask)
+        if wd < 0:
+            raise Exception('Inotfiy', self.error())
+        self.watched[spath] = wd
+        return wd
+
+    def watch_remove(self, spath):
+        ''' Remove path from watcher '''
+        if not spath in self.watched:
+            return
+        wd = self.watched[spath]
+        ret = self.libc.inotify_rm_watch(self.fd, wd)
+        if ret < 0:
+            raise Exception('Inotify', self.error())
+        self.watched.pop(spath)
+
+
 class Magic(object):
     ''' Magic wrapper '''
     def __init__(self):
@@ -1053,17 +1100,29 @@ class Magic(object):
 
         libmagic = ctypes.util.find_library('magic')
         self.libmagic = ctypes.CDLL(libmagic, use_errno=True)
-        self.flags = self.DEFAULT
-        self.cookie = self.libmagic.magic_open(self.flags)
-        self.libmagic.magic_load(self.cookie, None)
+
+        self._magic_open = self.libmagic.magic_open
+        self._magic_open.restype = ctypes.c_void_p
+        self._magic_open.argtypes = [ctypes.c_int]
+
+        self._magic_close = self.libmagic.magic_close
+        self._magic_close.restype = None
+        self._magic_close.argtypes = [ctypes.c_void_p]
+
+        self._magic_load = self.libmagic.magic_load
+        self._magic_load.restype = ctypes.c_int
+        self._magic_load.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 
         self._magic_file = self.libmagic.magic_file
         self._magic_file.restype = ctypes.c_char_p
         self._magic_file.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 
+        self.cookie = self._magic_open(self.DEFAULT)
+        self._magic_load(self.cookie, None)
+
     def __exit__(self, type, value, traceback):
-        if self.cookie and self.libmagic.magic_close:
-            self.libmagic.magic_close(self.cookie)
+        if self.cookie and self._magic_close:
+            self._magic_close(self.cookie)
 
     def error(self):
         ''' Get last error as string '''
@@ -1077,11 +1136,6 @@ class Magic(object):
             path = bytes(path, 'utf-8')
         result = self._magic_file(self.cookie, path)
         if not result or result == -1:
-            # libmagic 5.09 has a bug where it might fail to identify the
-            # mimetype of a file and returns null from magic_file, but also
-            # does not return an error message.
-            if (self.flags & self.MIME_TYPE):
-                return 'application/octet-stream'
             raise Exception(self.error())
         return result
 

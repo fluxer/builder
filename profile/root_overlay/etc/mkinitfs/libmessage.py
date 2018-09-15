@@ -6,9 +6,7 @@ A messaging module with fancy printing, logging and piped process handling.
 Unbuffered() is not something you should deal with, it will be used to override
 standard output forcing it to flush if stdout is not a TTY. Same goes for
 colors - if stdout is not TTY then they will be automatically disabled. It also
-logs everything passed to the messager via syslog unless told otherwise. And
-the cherry is that it can raise Exception if the CATCH attribute is set to
-value evaluated as True.
+logs everything passed to the messager via syslog unless told otherwise.
 '''
 
 import sys, curses, syslog
@@ -34,7 +32,6 @@ class Message(object):
         self.LOG = True
         self.LOG_STATUS = [syslog.LOG_DEBUG, syslog.LOG_CRIT, syslog.LOG_ALERT, syslog.LOG_INFO]
         self.DEBUG = False
-        self.CATCH = False
 
         try:
             curses.setupterm()
@@ -80,10 +77,6 @@ class Message(object):
             msgcolor = self.cdebug
             markcolor = self.cdebug
         elif status == syslog.LOG_CRIT:
-            if self.CATCH and marker:
-                raise Exception(msg, marker)
-            elif self.CATCH:
-                raise Exception(msg)
             printer = sys.stderr
             msgcolor = self.ccritical
             markcolor = self.ccritical
