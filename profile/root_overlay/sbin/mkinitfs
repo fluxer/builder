@@ -198,8 +198,7 @@ for conf in $("$BUSYBOX" find /etc/mkinitfs/ -maxdepth 1 -name '*.conf');do
 done
 
 Msg "Copying kernel modules"
-basedir="$("$BUSYBOX" dirname "$MODULESDIR")"
-"$BUSYBOX" mkdir -p "$TMPDIR/$basedir"
+"$BUSYBOX" mkdir -p "$TMPDIR/$MODULESDIR"
 for mod in $(echo $MODULES | "$BUSYBOX" sed 's|,| |g');do
     if "$BUSYBOX" grep -q "/$mod.ko" "$MODULESDIR/modules.builtin";then
         continue
@@ -211,10 +210,17 @@ for mod in $(echo $MODULES | "$BUSYBOX" sed 's|,| |g');do
     fi
     for modfile in $modfiles;do
         moddir=$("$BUSYBOX" dirname "$modfile")
-        "$BUSYBOX" mkdir -p "$TMPDIR/$basedir/$moddir"
-        "$BUSYBOX" cp -f "$MODULESDIR/$modfile" "$TMPDIR/$basedir/$moddir"
+        "$BUSYBOX" mkdir -p "$TMPDIR/$MODULESDIR/$moddir"
+        "$BUSYBOX" cp -f "$MODULESDIR/$modfile" "$TMPDIR/$MODULESDIR/$moddir"
     done
 done
+
+Msg "Updating kernel modules files"
+for modfile in $("$BUSYBOX" find "$MODULESDIR" -name 'modules.*');do
+    "$BUSYBOX" cp -f "$modfile" "$TMPDIR/$MODULESDIR/"
+done
+"$BUSYBOX" depmod "$KERNEL" -b "$TMPDIR"
+
 
 # NOTE: limited use-case ldconfig is provided by Gentoo even when musl is in
 # use thus making this check insufficient
