@@ -87,7 +87,7 @@ Cleanup() {
 
 Usage () {
 echo "
- mkinitfs v1.0.2 - initial RAM filesystem image creator
+ mkinitfs v1.0.3 - initial RAM filesystem image creator
 
   Usage: '# ${0##*/} <option> [<option>]..'
 
@@ -126,7 +126,7 @@ for arg in "$@";do
         -m=*|--modules=*) MODULES="${arg#*=}";;
         -b=*|--busybox=*) BUSYBOX="${arg#*=}";;
         -n|--noclean) NOCLEAN="yes" ;;
-        *) Usage ;;
+        *) Error "Unknown argument: $arg"; Usage ;;
     esac
 done
 
@@ -191,7 +191,7 @@ Msg "Copying additional files"
 for conf in $("$BUSYBOX" find /etc/mkinitfs/ -maxdepth 1 -name '*.conf');do
     for line in $(cat "$conf");do
         if [ -z "$line" ];then
-            contninue
+            continue
         fi
         CopyDep "$(echo $line | sed "s|%MODULESDIR%|$MODULESDIR|g")"
     done
@@ -200,10 +200,18 @@ done
 Msg "Copying kernel modules"
 basedir="$("$BUSYBOX" dirname "$MODULESDIR")"
 "$BUSYBOX" mkdir -p "$TMPDIR/$basedir"
-for mod in $MODULES;do
-    for modfile in $("$BUSYBOX" grep "/$mod.*:" "$MODULESDIR/modules.dep" | sed 's|:||g');do
+for mod in $(echo $MODULES | "$BUSYBOX" sed 's|,| |g');do
+    if "$BUSYBOX" grep -q "/$mod.ko" "$MODULESDIR/modules.builtin";then
+        continue
+    fi
+    modfiles="$("$BUSYBOX" grep "/$mod.ko" "$MODULESDIR/modules.dep" | "$BUSYBOX" sed 's|:||g')"
+    if [ -z "$modfiles" ];then
+        Error "Could not find module: $mod"
+        continue
+    fi
+    for modfile in $modfiles;do
         moddir=$("$BUSYBOX" dirname "$modfile")
-        mkdir -p "$TMPDIR/$basedir/$moddir"
+        "$BUSYBOX" mkdir -p "$TMPDIR/$basedir/$moddir"
         "$BUSYBOX" cp -f "$MODULESDIR/$modfile" "$TMPDIR/$basedir/$moddir"
     done
 done
