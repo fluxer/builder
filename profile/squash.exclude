@@ -32,9 +32,6 @@ sys/*
 proc/*
 mnt/*
 
-# the initramfs tool has done its job
-etc/mkinitfs/*
-
 # old,backup and all sort of trash files
 root/.bash_history
 root/.viminfo

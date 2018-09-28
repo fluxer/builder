@@ -1,0 +1,229 @@
+#!/bin/bash
+
+# NOTE: the script depends on beefy busybox, file and glibc. It will not work
+# with musl/uclibc because they do not provide ldd script. musl's ld can be
+# used as ldd via symlink but that is not obvious and not every distribution
+# does it (Gentoo does).
+
+set -e
+
+#========================== Helper functions ==========================#
+
+# set colors if supported
+if [ -t 0 ];then
+    C_BLACK='\e[1;30m'
+    C_RED='\e[1;31m'
+    C_GREEN='\e[1;32m'
+    C_YELLOW='\e[1;33m'
+    C_BLUE='\e[1;34m'
+    C_PURPLE='\e[1;35m'
+    C_CYAN='\e[1;36m'
+    C_WHITE='\e[1;37m'
+    C_CLEAR='\e[m'
+fi
+
+# usefull functions
+Msg() {
+    echo -e " ${C_BLUE}*${C_CLEAR} ${@}"
+}
+
+Warn() {
+    echo -e " ${C_YELLOW}*${C_CLEAR} ${@}"
+}
+
+Error() {
+    echo -e " ${C_RED}*${C_CLEAR} ${@}"
+    exit 1
+}
+
+CopyReal() {
+    basedir="$("$BUSYBOX" dirname "$1")"
+    "$BUSYBOX" mkdir -p "$TMPDIR/$basedir"
+    "$BUSYBOX" cp -a "$1" "$TMPDIR/$basedir"
+    if [ -h "$1" ];then
+        realpath="$("$BUSYBOX" readlink -f "$1")"
+        basedir="$("$BUSYBOX" dirname "$realpath")"
+        "$BUSYBOX" mkdir -p "$TMPDIR/$basedir"
+        "$BUSYBOX" cp -a "$realpath" "$TMPDIR/$basedir"
+    fi
+}
+
+FILE=""
+LDD=""
+CopyDep() {
+    CopyReal "$1"
+
+    mime="$("$FILE" -bi "$1" | "$BUSYBOX" cut -d';' -f1)"
+    if [ "$mime" == "application/x-executable" ] || [ "$mime" == "application/x-sharedlib" ];then
+        for dep in $("$LDD" "$1" 2>&1 | "$BUSYBOX" cut -d' ' -f3);do
+            case "$dep" in
+                    # "/*:" is captured from musl, "not" from glibc
+                    /*:|not) Warn "A dependency is not found for: $1" ;;
+                    # yay!
+                    /*) CopyReal "$dep" ;;
+            esac
+        done
+    fi
+}
+
+CopyOpt() {
+    if [ -e "$1" ];then
+        CopyReal "$1"
+    fi
+}
+
+TMPDIR=""
+NOCLEAN=""
+Cleanup() {
+    if [ -n "$TMPDIR" ];then
+        if [ -z "$NOCLEAN" ];then
+            Msg "Removing temporary directory"
+            rm -rf "$TMPDIR"
+        else
+            Msg "Temporary directory is: $TMPDIR"
+        fi
+    fi
+}
+
+Usage () {
+echo "
+ mkinitfs v1.0.2 - initial RAM filesystem image creator
+
+  Usage: '# ${0##*/} <option> [<option>]..'
+
+  Options:
+
+     -k|--kernel=[VERSION|auto]   Kernel version to work with (autodetected)
+     -m|--modules=[LIST|auto]     Modules to add (autodetected)
+     -b|--busybox=[PATH]          Path to Busybox (autodetected)
+     -n|--noclean                 Do not remove the temporary files
+
+  NOTE: by default the kernel version that the system is currently using is
+        going to be used for the image, if set to "auto" the most recent
+        kernel found will be used instead, usefull in chroot for an example.
+
+  NOTE2: a placeholder "%MODULESDIR%" can be used in configuration files which
+        are located in /etc/mkinitfs/ with .conf extension, they are list
+        of additional files to be copied before making the final image.
+"
+    exit 2
+}
+
+#============== Arguments handler and requirements checker ==============#
+
+FILE="$(type -p file)"
+LDD="$(type -p ldd)"
+if [ -z "$FILE" ] || [ -z "$LDD" ];then
+    Error "file or ldd is not found"
+fi
+
+KERNEL="$(uname -r)"
+MODULES="auto"
+BUSYBOX="$(type -p busybox)"
+for arg in "$@";do
+    case "$arg" in
+        -k=*|--kernel=*) KERNEL="${arg#*=}";;
+        -m=*|--modules=*) MODULES="${arg#*=}";;
+        -b=*|--busybox=*) BUSYBOX="${arg#*=}";;
+        -n|--noclean) NOCLEAN="yes" ;;
+        *) Usage ;;
+    esac
+done
+
+if [ -z "$KERNEL" ];then
+    Error "Kernel release is invalid: $KERNEL"
+fi
+
+if [ -z "$BUSYBOX" ] || [ ! -f "$BUSYBOX" ];then
+    Error "Busybox is not found: $BUSYBOX"
+fi
+
+#============================ Image creator ============================#
+
+MODULESDIR=""
+IMAGE="/boot/initramfs-$KERNEL.img"
+
+Msg "Searching for kernel modules directory"
+for kdir in '/lib/modules' '/lib32/modules' '/lib64/modules' \
+        '/usr/lib/modules' '/usr/lib32/modules' '/usr/lib64/modules';do
+    if [ "$KERNEL" == "auto" ] && [ -d "$kdir" ];then
+        autodetected="$("$BUSYBOX" find "$kdir" -name 'modules.symbols' | "$BUSYBOX" sort | "$BUSYBOX" head -n1)"
+        if [ -n "$autodetected" ];then
+            KERNEL="$("$BUSYBOX" basename $("$BUSYBOX" dirname "$autodetected"))"
+            MODULESDIR="$kdir/$KERNEL"
+            IMAGE="/boot/initramfs-$KERNEL.img"
+            break
+        fi
+    elif [ -d "$kdir/$KERNEL" ];then
+        MODULESDIR="$kdir/$KERNEL"
+        break
+    fi
+done
+
+if [ "$KERNEL" == "auto" ];then
+    Error "Kernel release could not be detected"
+elif [ -z "$MODULESDIR" ];then
+    Error "Kernel release is invalid: $KERNEL"
+fi
+
+if [ "$MODULES" == "auto" ];then
+    MODULES=""
+    for mdir in /sys/module/*;do
+        if [ -d "$mdir/sections" ];then
+            MODULES="$MODULES $($BUSYBOX basename $mdir)"
+        fi
+    done
+fi
+
+trap Cleanup EXIT
+TMPDIR="$(mktemp -d)"
+
+Msg "Copying root overlay"
+"$BUSYBOX" cp -a /etc/mkinitfs/root/* "$TMPDIR/"
+
+Msg "Copying Busybox"
+CopyDep "$BUSYBOX"
+
+Msg "Installing Busybox applets"
+"$BUSYBOX" --install -s "$TMPDIR/bin"
+
+Msg "Copying additional files"
+for conf in $("$BUSYBOX" find /etc/mkinitfs/ -maxdepth 1 -name '*.conf');do
+    for line in $(cat "$conf");do
+        if [ -z "$line" ];then
+            contninue
+        fi
+        CopyDep "$(echo $line | sed "s|%MODULESDIR%|$MODULESDIR|g")"
+    done
+done
+
+Msg "Copying kernel modules"
+basedir="$("$BUSYBOX" dirname "$MODULESDIR")"
+"$BUSYBOX" mkdir -p "$TMPDIR/$basedir"
+for mod in $MODULES;do
+    for modfile in $("$BUSYBOX" grep "/$mod.*:" "$MODULESDIR/modules.dep" | sed 's|:||g');do
+        moddir=$("$BUSYBOX" dirname "$modfile")
+        mkdir -p "$TMPDIR/$basedir/$moddir"
+        "$BUSYBOX" cp -f "$MODULESDIR/$modfile" "$TMPDIR/$basedir/$moddir"
+    done
+done
+
+# NOTE: limited use-case ldconfig is provided by Gentoo even when musl is in
+# use thus making this check insufficient
+if [ -n "$(type -p ldconfig)" ];then
+    Msg "Copying ld configs"
+    CopyOpt /etc/ld.so.conf
+    CopyOpt /etc/ld.so.conf.d
+
+    Msg "Creating shared libraries cache"
+    "$BUSYBOX" mkdir -p "$TMPDIR/etc"
+    ldconfig -r "$TMPDIR"
+fi
+
+Msg "Creating essential nodes"
+"$BUSYBOX" mkdir -p "$TMPDIR/dev"
+"$BUSYBOX" mknod -m 640 "$TMPDIR/dev/console" c 5 1
+"$BUSYBOX" mknod -m 664 "$TMPDIR/dev/null" c 1 0
+
+Msg "Creating image: $IMAGE"
+(cd "$TMPDIR" && "$BUSYBOX" find . | "$BUSYBOX" cpio -o -H newc | "$BUSYBOX" gzip > "$IMAGE")

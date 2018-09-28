@@ -205,7 +205,7 @@ Build() {
 
     mkdir -p "${ISO_DIR}/live"
     msg "Generating kernel images"
-    Chroot "python2 /etc/mkinitfs/mkinitfs.py -m= -r False" || die
+    Chroot mkinitfs -m="${KERNEL_MODULES}" -k=auto || die
 
     msg "Copying boot files"
     linux="$(ls ${FILESYSTEM_DIR}/boot/*.img | tail -1)"
