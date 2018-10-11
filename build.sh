@@ -162,33 +162,31 @@ Setup() {
         Chroot "rc-update add live_config boot"
         Chroot "rc-update add live_install default"
         Chroot "rc-update add live_eject shutdown"
+    else
+        rm -f "${FILESYSTEM_DIR}/etc/init.d/live_"*
     fi
 }
 
 #=========================== Interactive chroot ===========================#
 
 Chroot() {
-    if which systemd-nspawn 1>/dev/null && pgrep systemd 1>/dev/null;then
-        systemd-nspawn --share-system -D "${FILESYSTEM_DIR}" $@ || die
-    else
-        local EXPORTS i rv
-        EXPORTS="XDG_CACHE_HOME=/root/.cache XDG_DATA_HOME=/root XDG_CONFIG_HOME=/root/.config"
-        EXPORTS="${EXPORTS} HOME=/root LANG=C LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin"
+    local EXPORTS i rv
+    EXPORTS="XDG_CACHE_HOME=/root/.cache XDG_DATA_HOME=/root XDG_CONFIG_HOME=/root/.config"
+    EXPORTS="${EXPORTS} HOME=/root LANG=C LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin"
 
-        msg "Preparing chroot"
-        cp -f /etc/resolv.conf "${FILESYSTEM_DIR}/etc" || die
-        ln -sf /proc/mounts "${FILESYSTEM_DIR}/etc/mtab" || die
+    msg "Preparing chroot"
+    cp -f /etc/resolv.conf "${FILESYSTEM_DIR}/etc" || die
+    ln -sf /proc/mounts "${FILESYSTEM_DIR}/etc/mtab" || die
 
-        msg "Mounting pseudo filesystems"
-        for i in dev dev/pts proc sys tmp;do
-            if ! mountpoint -q "${FILESYSTEM_DIR}/$i" ;then
-                mkdir -p "${FILESYSTEM_DIR}/$i" || die
-                mount --bind "/$i" "${FILESYSTEM_DIR}/$i" || die
-            fi
-        done
+    msg "Mounting pseudo filesystems"
+    for i in dev dev/pts proc sys tmp;do
+        if ! mountpoint -q "${FILESYSTEM_DIR}/$i" ;then
+            mkdir -p "${FILESYSTEM_DIR}/$i" || die
+            mount --bind "/$i" "${FILESYSTEM_DIR}/$i" || die
+        fi
+    done
 
-        env ${EXPORTS} chroot "${FILESYSTEM_DIR}" $@
-    fi
+    env ${EXPORTS} chroot "${FILESYSTEM_DIR}" $@
 
     rv="$?"
     unmount_pseudo

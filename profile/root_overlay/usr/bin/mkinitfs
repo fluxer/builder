@@ -193,25 +193,25 @@ for conf in $("$BUSYBOX" find /etc/mkinitfs/ -maxdepth 1 -name '*.conf');do
         if [ -z "$line" ];then
             continue
         fi
-        CopyDep "$(echo $line | sed "s|%MODULESDIR%|$MODULESDIR|g")"
+        CopyDep "$(echo $line | "$BUSYBOX" sed "s|%MODULESDIR%|$MODULESDIR|g")"
     done
 done
 
 Msg "Copying kernel modules"
 "$BUSYBOX" mkdir -p "$TMPDIR/$MODULESDIR"
-for mod in $(echo $MODULES | "$BUSYBOX" sed 's|,| |g');do
-    if "$BUSYBOX" grep -q "/$mod.ko" "$MODULESDIR/modules.builtin";then
-        continue
-    fi
-    modfiles="$("$BUSYBOX" grep "/$mod.ko" "$MODULESDIR/modules.dep" | "$BUSYBOX" sed 's|:||g')"
+for mod in ${MODULES//,/ };do
+    altmod="${mod//_/-}"
+    modfiles="$("$BUSYBOX" grep -E "/($mod|$altmod).ko.*:" "$MODULESDIR/modules.dep" || true)"
     if [ -z "$modfiles" ];then
+        if "$BUSYBOX" grep -q -E "/($mod.ko|$altmod.ko)" "$MODULESDIR/modules.builtin";then
+            continue
+        fi
         Error "Could not find module: $mod"
-        continue
     fi
-    for modfile in $modfiles;do
+    for modfile in ${modfiles//:/};do
         moddir=$("$BUSYBOX" dirname "$modfile")
         "$BUSYBOX" mkdir -p "$TMPDIR/$MODULESDIR/$moddir"
-        "$BUSYBOX" cp -f "$MODULESDIR/$modfile" "$TMPDIR/$MODULESDIR/$moddir"
+        "$BUSYBOX" cp -u "$MODULESDIR/$modfile" "$TMPDIR/$MODULESDIR/$moddir"
     done
 done
 
@@ -220,7 +220,6 @@ for modfile in $("$BUSYBOX" find "$MODULESDIR" -name 'modules.*');do
     "$BUSYBOX" cp -f "$modfile" "$TMPDIR/$MODULESDIR/"
 done
 "$BUSYBOX" depmod "$KERNEL" -b "$TMPDIR"
-
 
 # NOTE: limited use-case ldconfig is provided by Gentoo even when musl is in
 # use thus making this check insufficient
