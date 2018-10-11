@@ -54,7 +54,7 @@ CopyDep() {
     CopyReal "$1"
 
     mime="$("$FILE" -bi "$1" | "$BUSYBOX" cut -d';' -f1)"
-    if [ "$mime" == "application/x-executable" ] || [ "$mime" == "application/x-sharedlib" ];then
+    if [ "$mime" == "application/x-executable" ] || [ "$mime" == "application/x-pie-executable" ] ||  [ "$mime" == "application/x-sharedlib" ];then
         for dep in $("$LDD" "$1" 2>&1 | "$BUSYBOX" cut -d' ' -f3);do
             case "$dep" in
                     # "/*:" is captured from musl, "not" from glibc
@@ -87,7 +87,7 @@ Cleanup() {
 
 Usage () {
 echo "
- mkinitfs v1.0.3 - initial RAM filesystem image creator
+ mkinitfs v1.0.4 - initial RAM filesystem image creator
 
   Usage: '# ${0##*/} <option> [<option>]..'
 
