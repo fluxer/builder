@@ -87,16 +87,17 @@ Cleanup() {
 
 Usage () {
 echo "
- mkinitfs v1.0.4 - initial RAM filesystem image creator
+ mkinitfs v1.0.6 - initial RAM filesystem image creator
 
   Usage: '# ${0##*/} <option> [<option>]..'
 
   Options:
 
      -k|--kernel=[VERSION|auto]   Kernel version to work with (autodetected)
-     -m|--modules=[LIST|auto]     Modules to add (autodetected)
+     -m|--modules=[LIST|base|auto]     Modules to add (autodetected)
      -b|--busybox=[PATH]          Path to Busybox (autodetected)
      -n|--noclean                 Do not remove the temporary files
+     -h|--help                    Print usage
 
   NOTE: by default the kernel version that the system is currently using is
         going to be used for the image, if set to "auto" the most recent
@@ -119,6 +120,7 @@ fi
 
 KERNEL="$(uname -r)"
 MODULES="auto"
+BASEMODULES="atkbd loop cdrom isofs usb-storage ehci-pci ehci-hcd ehci-platform ohci-pci ohci-hcd ohci-platform uhci-hcd xhci-hcd sd_mod sr_mod ata_piix ahci"
 BUSYBOX="$(type -p busybox)"
 for arg in "$@";do
     case "$arg" in
@@ -126,7 +128,8 @@ for arg in "$@";do
         -m=*|--modules=*) MODULES="${arg#*=}";;
         -b=*|--busybox=*) BUSYBOX="${arg#*=}";;
         -n|--noclean) NOCLEAN="yes" ;;
-        *) Error "Unknown argument: $arg"; Usage ;;
+        -h|--help) Usage ;;
+        *) Error "Unknown argument: $arg" ;;
     esac
 done
 
@@ -173,10 +176,12 @@ if [ "$MODULES" == "auto" ];then
             MODULES="$MODULES $($BUSYBOX basename $mdir)"
         fi
     done
+elif [ "$MODULES" == "base" ];then
+    MODULES="$BASEMODULES"
 fi
 
 trap Cleanup EXIT
-TMPDIR="$(mktemp -d)"
+TMPDIR="$("$BUSYBOX" mktemp -d)"
 
 Msg "Copying root overlay"
 "$BUSYBOX" cp -a /etc/mkinitfs/root/* "$TMPDIR/"

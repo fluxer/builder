@@ -85,7 +85,7 @@ esac
 
 msg "Setting up hotplugger..."
 if [ -e "/proc/sys/kernel/hotplug" ];then
-    cmd echo /bin/mdev > /proc/sys/kernel/hotplug
+    cmd echo "$(which mdev)" > /proc/sys/kernel/hotplug
 fi
 cmd touch /dev/mdev.log
 cmd mdev -s
@@ -125,7 +125,7 @@ if [ -e "$device" ];then
     cmd fsck -M -T "$device"
     # compensate for Busybox not supporting mount options via fstab properly
     # TODO: send a bug report
-    rootoptions=$(grep "$root" /etc/fstab | cut -f4)
+    rootoptions=$(grep "$root" /etc/fstab | awk -F' ' '{print $4}')
     msg "Mounting the root filesystem..."
     cmd mount -o "$state,$rootoptions" "$device" /newroot
 fi

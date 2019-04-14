@@ -113,7 +113,7 @@ elif [ -z "$MODULESDIR" ];then
 fi
 
 trap Cleanup EXIT
-TMPDIR="$(mktemp -d)"
+TMPDIR="$("$BUSYBOX" mktemp -d)"
 
 Msg "Listing image: $IMAGE"
 (cd "$TMPDIR" && "$BUSYBOX" gunzip -c "$IMAGE" | "$BUSYBOX" cpio -t -v)
