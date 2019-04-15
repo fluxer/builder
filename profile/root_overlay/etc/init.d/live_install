@@ -1,14 +1,6 @@
-#!/sbin/openrc-run
+#!/bin/sh
 
-depend() {
-    before kdm
-    after live_config
-    use net
-}
-
-msg() {
-    echo -e " >> $*"
-}
+. /etc/rc.common
 
 getcolumns() {
     if type -p tput ;then
@@ -566,7 +558,7 @@ shell_exec() {
 #============================== Execute function if asigned =============================#
 
 start() {
-    source "/etc/live.conf"
+    . "/etc/live.conf"
 
     # Parse /proc/cmdline and override variables
     for arg in $(cat /proc/cmdline);do
@@ -581,16 +573,15 @@ start() {
         i_store="/run/live_install"
         install_path="/mnt/install"
         def=1
-        ebegin "Initiating Live CD/DVD/USB installer"
+        msg "Initiating Live CD/DVD/USB installer"
 
         reset_state
 
         install_main_menu
-
-        eend $?
     fi
 }
 
-stop() {
-    return 0
-}
+case "$1" in
+    start) start ;;
+    stop) ;;
+esac

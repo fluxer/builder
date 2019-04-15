@@ -158,13 +158,6 @@ Clean() {
 Setup() {
     msg "Copying root filesystem overlay"
     cp -rf "profile/root_overlay"/* "${FILESYSTEM_DIR}" || die
-    if Chroot "which runscript" ;then
-        Chroot "rc-update add live_config boot"
-        Chroot "rc-update add live_install default"
-        Chroot "rc-update add live_eject shutdown"
-    else
-        rm -f "${FILESYSTEM_DIR}/etc/init.d/live_"*
-    fi
 }
 
 #=========================== Interactive chroot ===========================#
