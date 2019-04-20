@@ -11,10 +11,10 @@ msg() {
 }
 
 getcolumns() {
-    if type -p tput ;then
+    if [ "$(type -p tput)" ];then
         # tput is a ncurses program
         result="$(tput cols)"
-    elif type -p ttysize ;then
+    elif [ "$(type -p ttysize)" ];then
         # ttysize is a Busybox applet
         result="$(ttysize | cut -f1 -d' ')"
     else
