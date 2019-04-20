@@ -1,6 +1,4 @@
-#!/bin/sh
-
-. /etc/rc.common
+#!/sbin/openrc-run
 
 configure() {
     if [ "${LIVE_STARTX}" = "1" ] && [ -n "$(which Xorg)" ] && [ -n "$(which startx)" ];then    
@@ -53,7 +51,7 @@ configure() {
 }
 
 start() {
-    . "/etc/live.conf"
+    source "/etc/live.conf"
 
     # Parse /proc/cmdline and override variables
     for arg in $(cat /proc/cmdline);do
@@ -71,16 +69,18 @@ start() {
     done
 
     if [ "${LIVE_CONFIG}" = "1" ];then
-        msg "Making sure root filesystem is read-write"
-        cmd mount -o remount,rw /
+        ebegin "Configuring Live CD/DVD/USB environment"
 
-        msg "Configuring Live CD/DVD/USB environment"
-        cmd configure
-        cmd kill -SIGHUP 1
+        einfo "Making sure root filesystem is read-write"
+        mount -o remount,rw /
+        einfo "Setting things up"
+        configure
+        kill -SIGHUP 1
+
+        eend $?
     fi
 }
 
-case "$1" in
-    start) start ;;
-    stop) ;;
-esac
+stop() {
+    return 0
+}
