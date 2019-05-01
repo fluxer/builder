@@ -1,11 +1,10 @@
 ## Requirements on the host
 
-bash, squashfs-tools, grub (version 2 or later), xorriso, busybox
+bash, squashfs-tools, grub (version 2 or later), xorriso
 
 ## Requirements in the root filesystem
 
-squashfs-tools, util-linux, python (<=2.7.x), busybox, binutils, kernel with
-overlayfs support (>=3.18.x)
+squashfs-tools, file, busybox, kernel with overlayfs support (>=3.18.x)
 
 ## The concept
 
