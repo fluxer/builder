@@ -203,7 +203,7 @@ Build() {
 
     mkdir -p "${ISO_DIR}/live"
     msg "Generating kernel images"
-    Chroot mkinitfs -m="${KERNEL_MODULES}" -k=auto || die
+    Chroot mkinitfs -m ${KERNEL_MODULES} -k=auto || die
 
     msg "Copying boot files"
     linux="$(ls ${FILESYSTEM_DIR}/boot/*.img | tail -1)"
