@@ -210,7 +210,8 @@ Build() {
     #======================= Squash the root filesystem ======================#
     msg "Calculating filesystem size"
     # FIXME: busybox du does not support --exclude-from
-    size=$(du --exclude-from="${EXCLUDE_CONF}" -s "${FILESYSTEM_DIR}" | cut -f1)
+    # size=$(du --exclude-from="${EXCLUDE_CONF}" -s "${FILESYSTEM_DIR}" | cut -f1)
+    size=$(du -s "${FILESYSTEM_DIR}" | cut -f1)
     echo "${size}" > "${ISO_DIR}/live/root.size" || die
 
     msg "Compressing filesystem to SquashFS image"
