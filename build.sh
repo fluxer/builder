@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builder - Bash script to build GNU/Linux Live CD/DVDs
 #
-# Copyright (c) 2012-2016, Ivailo Monev
+# Copyright (c) 2012-2020, Ivailo Monev
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -232,7 +232,7 @@ Build() {
     sed -i "s|__TITLE__|${TITLE}|g" "${ISO_DIR}/boot/grub/grub.cfg" || die
     sed -i "s|__BOOT_OPTIONS__|${BOOT_OPTIONS}|g" "${ISO_DIR}/boot/grub/grub.cfg" || die
     sed -i "s|__FALLBACK_OPTIONS__|${BOOT_FALLBACK_OPTIONS}|g" "${ISO_DIR}/boot/grub/grub.cfg" || die
-    sed -i "s|__ARCH__|$(uname -m)|g" "${ISO_DIR}/boot/grub/grub.cfg" || die
+    sed -i "s|__ARCH__|${BUILD_ARCH}|g" "${ISO_DIR}/boot/grub/grub.cfg" || die
     sed -i "s|__RELEASE__|$(date +%Y%m%d)|g" "${ISO_DIR}/boot/grub/grub.cfg" || die
 
     #========================== Prepare EFI/UEFI ==========================#
@@ -253,7 +253,7 @@ Build() {
 
     #========================= Create ISO image ===========================#
     msg "Creating ISO"
-    iso="$(pwd)/$(echo ${BUILD_PROFILE} | tr '[:lower:]' '[:upper:]')-$(uname -m)-$(date +%Y%m%d).iso"
+    iso="$(pwd)/$(echo ${BUILD_PROFILE} | tr '[:lower:]' '[:upper:]')-${BUILD_ARCH}-$(date +%Y%m%d).iso"
     grub-mkrescue -o "${iso}" "${ISO_DIR}" -- -volid "${ISO}" ${GRUB_OPTIONS} || die
 }
 
@@ -261,12 +261,13 @@ Build() {
 
 Usage () {
 echo "
- Builder v4.3.0 - Bash script to build GNU/Linux Live CD/DVDs
+ Builder v4.3.1 - Bash script to build GNU/Linux Live CD/DVDs
 
   Usage: '# ${0##*/} <profile> <option> [<option>] [<option>]..'
 
   Options:
 
+     -a=|--arch=<arch>            Specify architecture (defaults to $(uname -m))
      -s|--setup                   Setup root filesystem
      -c|--chroot                  Chroot into the filesystem
      -b|--build                   Build ISO image
@@ -280,16 +281,27 @@ echo "
 
 runtime_check
 if [ "$#" -gt "1" ];then
+    args_array=("$@")
+
     export BUILD_PROFILE="${1}" && shift
-    export FILESYSTEM_DIR="$(pwd)/${BUILD_PROFILE}_root_$(uname -m)"
-    export ISO_DIR="$(pwd)/${BUILD_PROFILE}_iso_$(uname -m)"
+    export BUILD_ARCH="$(uname -m)"
+
+    # Extra options
+    for arg in "${args_array[@]}";do
+        case "${arg}" in
+            -a=*|--arch=*) export BUILD_ARCH="${arg#*=}"; shift ;;
+        esac
+    done
+
+    export FILESYSTEM_DIR="$(pwd)/${BUILD_PROFILE}_root_${BUILD_ARCH}"
+    export ISO_DIR="$(pwd)/${BUILD_PROFILE}_iso_${BUILD_ARCH}"
     source "profile/preferences.conf"
     export EXCLUDE_CONF="profile/squash.exclude"
 
-    args_array=("$@")
+    # Main options
     for arg in "${args_array[@]}";do
         case "${arg}" in
-            # Main options
+            -a=*|--arch=*) ;;
             -s|--setup) Check && Setup ;;
             -c|--chroot) Check && Chroot "/bin/bash -l" || die ;;
             -b|--build) Check && Build ;;
