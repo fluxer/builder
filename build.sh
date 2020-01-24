@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builder - Bash script to build GNU/Linux Live CD/DVDs
 #
-# Copyright (c) 2012-2016, Ivailo Monev
+# Copyright (c) 2012-2020, Ivailo Monev
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -255,7 +255,7 @@ Build() {
 
 Usage () {
 echo "
- Builder v4.3.0 - Bash script to build GNU/Linux Live CD/DVDs
+ Builder v4.4.0 - Bash script to build GNU/Linux Live CD/DVDs
 
   Usage: '# ${0##*/} <profile> <option> [<option>] [<option>]..'
 

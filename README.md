@@ -4,7 +4,8 @@ bash, squashfs-tools, grub (version 2 or later), xorriso
 
 ## Requirements in the root filesystem
 
-squashfs-tools, file, busybox, kernel with overlayfs support (>=3.18.x)
+squashfs-tools, grub (version 2 or later), file, busybox, kernel with
+overlayfs support (>=3.18.x) and [mkinitfs](https://github.com/fluxer/mkinitfs).
 
 ## The concept
 
@@ -40,8 +41,8 @@ There are a few reasons you should use this project:
 
 Since the ISO image created by this tool will have a structure that the
 distribution's installer (if existent) will not support you will have to
-perform installation yourself, unless it uses OpenRC init system for which
-a very simple installer service is provided.
+perform installation yourself, unless it uses BSD-style init system for
+which a very simple installer service is provided.
 
 ## How to use
 
