@@ -203,7 +203,7 @@ Build() {
 
     mkdir -p "${ISO_DIR}/live"
     msg "Generating kernel images"
-    Chroot mkinitfs -m ${KERNEL_MODULES} -k=auto || die
+    Chroot mkinitfs -m=${KERNEL_MODULES} -k=auto || die
 
     msg "Copying boot files"
     linux="$(ls ${FILESYSTEM_DIR}/boot/*.img | tail -1)"
@@ -261,7 +261,7 @@ Build() {
 
 Usage () {
 echo "
- Builder v4.3.1 - Bash script to build GNU/Linux Live CD/DVDs
+ Builder v4.4.0 - Bash script to build GNU/Linux Live CD/DVDs
 
   Usage: '# ${0##*/} <profile> <option> [<option>] [<option>]..'
 

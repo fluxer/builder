@@ -1,11 +1,11 @@
 ## Requirements on the host
 
-bash, squashfs-tools, grub (version 2 or later), xorriso, busybox
+bash, squashfs-tools, grub (version 2 or later), xorriso
 
 ## Requirements in the root filesystem
 
-squashfs-tools, util-linux, python (<=2.7.x), busybox, binutils, kernel with
-overlayfs support (>=3.18.x)
+squashfs-tools, grub (version 2 or later), file, busybox, kernel with
+overlayfs support (>=3.18.x) and [mkinitfs](https://github.com/fluxer/mkinitfs).
 
 ## The concept
 
@@ -41,8 +41,8 @@ There are a few reasons you should use this project:
 
 Since the ISO image created by this tool will have a structure that the
 distribution's installer (if existent) will not support you will have to
-perform installation yourself, unless it uses OpenRC init system for which
-a very simple installer service is provided.
+perform installation yourself, unless it uses OpenRC init system for
+which a very simple installer service is provided.
 
 ## How to use
 
@@ -75,8 +75,7 @@ to setup the root filesystem and create ISO image for you:
 ## License
 
 See COPYING, the files that will be bundled with the ISO image are public
-domain licensed. The initramfs tool is periodic copy from my BFP project
-with adjustments when needed to cut the fat.
+domain licensed.
 
 ## TODO
 
