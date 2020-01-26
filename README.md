@@ -5,7 +5,8 @@ bash, squashfs-tools, grub (version 2 or later), xorriso
 ## Requirements in the root filesystem
 
 squashfs-tools, grub (version 2 or later), file, busybox, kernel with
-overlayfs support (>=3.18.x) and [mkinitfs](https://github.com/fluxer/mkinitfs).
+overlayfs support (>=3.18.x) and [mkinitfs](https://github.com/fluxer/mkinitfs)
+and optionally dialog for the installer.
 
 ## The concept
 
