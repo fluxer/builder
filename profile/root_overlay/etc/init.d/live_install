@@ -44,7 +44,7 @@ chroot_install_init() {
     for mnt in "/dev" "/proc" "/sys"; do
         if [ -z "$(grep ${install_path}${mnt} /proc/mounts)" ];then
             msg "Mounting ${mnt}"
-            mount --rbind "${mnt}" "${install_path}${mnt}"
+            mount --bind "${mnt}" "${install_path}${mnt}"
         fi
     done
 }
