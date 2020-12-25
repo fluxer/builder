@@ -67,3 +67,4 @@ var/cache/pacman/pkg
 var/cache/spm/sources
 var/cache/spm/tarballs
 var/tmp/spm
+usr/pkgsrc
